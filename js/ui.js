@@ -347,7 +347,7 @@ function inspChord(b) {
   const idx = new Set(arpeggioIdx(set, shape.notes, b.range, b.pattern, 'once', b.unit));
   return `<div class="grid">
     ${ctl('Grundton', selHTML('root', markOpts(CHORD_ROOTS.map(r => [r, deName(r) + (doc.key && chordDegree(r, doc.key) >= 0 ? ' · ' + romanOf(chordDegree(r, doc.key), diatonicChord(doc.key.root, doc.key.mode, chordDegree(r, doc.key), false).quality) : '')]), r => chordRootLevel(r, doc.key), b.root), b.root))}
-    ${ctl('Akkord', selHTML('quality', markOpts(Object.entries(CHORDS).map(([k, c]) => [k, `${deName(b.root)}${c.sym} · ${c.label}`]), q => doc.key ? chordFit(b.root, q, doc.key).level : null, b.quality), b.quality))}
+    ${ctl('Akkord', selHTML('quality', markOpts(chordEntries().map(([k, c]) => [k, `${deName(b.root)}${c.sym} · ${c.label}`]), q => doc.key ? chordFit(b.root, q, doc.key).level : null, b.quality), b.quality))}
     ${chordControls(b)}
   </div>${chordBoard(set, shape.notes, b.fret, i => idx.has(i))}
   <p class="hint">Töne: ${set.map(t => deNote(t.letter, t.alter)).join(' · ')}</p>`;
@@ -360,7 +360,7 @@ function chordBoard(set, notes, fret, inArp) {
 function inspProg(b) {
   const chords = progChords(b), sc = buildScale(b.root, b.mode, 'scale');
   const degOpts = sc.map((t, i) => [i, `${ROMAN[i]} · ${deNote(t.letter, t.alter)}`]);
-  const qOpts = [['auto', 'leitereigen']].concat(Object.entries(CHORDS).map(([k, c]) => [k, c.sym || 'Dur']));
+  const qOpts = [['auto', 'leitereigen']].concat(chordEntries().map(([k, c]) => [k, k === '5' ? '5 · Powerchord' : c.sym || 'Dur']));
   const first = chords[0];
   let board = '';
   if (first) { const set = buildChord(first.root, first.quality), notes = shapePosition(set, b.fret); board = chordBoard(set, notes, b.fret, () => true) + `<p class="hint">Griffbild: ${h(chordName(first.root, first.quality))}, der erste Akkord in dieser Lage.</p>`; }
@@ -412,7 +412,7 @@ function inspFree(b, B) {
     ${ctl(`Länge${r ? ' <em>(gilt für die Auswahl)</em>' : ' <em>(für neue Töne)</em>'}`, `<div class="chips" role="group" aria-label="Notenlänge">${FREE_UNITS.map(k => `<button type="button" class="chip" data-dur="${k}" aria-pressed="${k === curDur}">${DUR_LABEL[k]}</button>`).join('')}</div>`, 'wide')}
     ${ctl('Klick aufs Griffbrett', segHTML('insmode', [['after', 'Einfügen'], ['replace', 'Ersetzen'], ['stack', 'Akkord stapeln']], ui.mode))}
     ${ctl('Akkordgriff einfügen', `<div class="toolbar"><select id="chRoot" aria-label="Grundton" style="width:auto">${markOpts(CHORD_ROOTS.map(x => [x, deName(x)]), x => chordRootLevel(x, doc.key), C.root).map(([x, l]) => `<option value="${x}"${x === C.root ? ' selected' : ''}>${h(l)}</option>`).join('')}</select>
-      <select id="chQ" aria-label="Akkordart" style="width:auto">${markOpts(Object.entries(CHORDS).map(([k, c]) => [k, c.sym || 'Dur']), q => doc.key ? chordFit(C.root, q, doc.key).level : null, C.q).map(([k, l]) => `<option value="${k}"${k === C.q ? ' selected' : ''}>${h(l)}</option>`).join('')}</select>
+      <select id="chQ" aria-label="Akkordart" style="width:auto">${markOpts(chordEntries().map(([k, c]) => [k, k === '5' ? '5 · Powerchord' : c.sym || 'Dur']), q => doc.key ? chordFit(C.root, q, doc.key).level : null, C.q).map(([k, l]) => `<option value="${k}"${k === C.q ? ' selected' : ''}>${h(l)}</option>`).join('')}</select>
       <select id="chFret" aria-label="Lage" style="width:auto">${Array.from({ length: 13 }, (_, i) => `<option value="${i}"${i === C.fret ? ' selected' : ''}>${i === 0 ? 'offen' : 'Bund ' + i}</option>`).join('')}</select>
       <button class="btn sm" data-do="chordIns">Einfügen</button></div>`, 'wide')}
   </div>

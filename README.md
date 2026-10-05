@@ -23,7 +23,7 @@ Jeder Baustein hat einen eigenen Notenwert (Viertel, Achtel, Achteltriolen, Sech
 - In der Tabulatur einen Ton anklicken, mit Umschalt-Klick einen Bereich markieren, auch über mehrere Bausteine. Kopieren, dann in eine freie Tonfolge einfügen (ohne Auswahl entsteht eine neue). Rhythmus und Pausen bleiben dabei erhalten.
 - In freien Tonfolgen: ausschneiden, einfügen, löschen, Länge für die markierten Töne ändern.
 - Mehrere Bausteine mit Strg-Klick oder Umschalt-Klick markieren und zu einer Tonfolge zusammenführen.
-- Akkorde: „Akkord stapeln“ legt Töne übereinander, „Akkordgriff einfügen“ setzt einen fertigen Griff (Grundton, Akkordart, Lage).
+- Akkorde: „Akkord stapeln“ legt Töne übereinander, „Akkordgriff einfügen“ setzt einen fertigen Griff (Grundton, Akkordart, Lage), auch Powerchords (Grundton, Quinte, Oktave).
 - Einen erzeugten Baustein in eine freie Tonfolge umwandeln, um jeden Ton direkt zu ändern.
 
 **Tonart des Stücks:** oben wählen (alle Dur- und Molltonarten). Dann gilt:

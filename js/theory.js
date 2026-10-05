@@ -35,9 +35,12 @@ const CHORDS = {
   m7: { sym: 'm7', label: 'Moll-Sept', iv: [0, 3, 7, 10], st: [0, 2, 4, 6] },
   m7b5: { sym: 'm7♭5', label: 'halbvermindert', iv: [0, 3, 6, 10], st: [0, 2, 4, 6] },
   dim7: { sym: '°7', label: 'vermindert Sept', iv: [0, 3, 6, 9], st: [0, 2, 4, 6] },
-  '9': { sym: '9', label: 'None', iv: [0, 4, 7, 10, 2], st: [0, 2, 4, 6, 1] }
+  '9': { sym: '9', label: 'None', iv: [0, 4, 7, 10, 2], st: [0, 2, 4, 6, 1] },
+  '5': { sym: '5', label: 'Powerchord', iv: [0, 7], st: [0, 4] }
 };
 
+const CHORD_ORDER = ['maj', 'min', '5', '7', 'maj7', 'm7', '6', 'm6', '9', 'sus2', 'sus4', 'dim', 'm7b5', 'dim7', 'aug'];
+function chordEntries() { return CHORD_ORDER.map(k => [k, CHORDS[k]]); }
 function parseName(n) {
   const letter = LETTERS.indexOf(n[0]);
   const acc = n.slice(1);
@@ -103,7 +106,7 @@ function romanOf(deg, q) {
   const minorish = ['min', 'm7', 'dim', 'm7b5', 'dim7', 'm6'].includes(q);
   let r = ROMAN[deg];
   if (minorish) r = r.toLowerCase();
-  const suf = { dim: '°', m7b5: 'ø7', dim7: '°7', aug: '+', '7': '7', maj7: 'maj7', m7: '7', '6': '6', m6: '6', '9': '9', sus2: 'sus2', sus4: 'sus4' }[q] || '';
+  const suf = { '5': '5', dim: '°', m7b5: 'ø7', dim7: '°7', aug: '+', '7': '7', maj7: 'maj7', m7: '7', '6': '6', m6: '6', '9': '9', sus2: 'sus2', sus4: 'sus4' }[q] || '';
   return r + suf;
 }
 

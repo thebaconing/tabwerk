@@ -154,7 +154,7 @@ for (const mode of ['major', 'minor']) for (const [root] of T.ROOTS[mode]) for (
 
 // --- Akkordgriffe ---
 const grip = (r, q, f) => { const p = T.chordVoicing(r, q, f), m = {}; p.forEach(x => m[x.s] = x.f); return [0, 1, 2, 3, 4, 5].map(s => m[s] == null ? 'x' : m[s]).join(''); };
-[['C', 'maj', 0, 'x32010'], ['A', 'min', 0, 'x02210'], ['G', 'maj', 0, '320003'], ['E', 'maj', 0, '022100'], ['D', 'maj', 0, 'xx0232'], ['E', '7', 0, '020100'], ['F', 'maj', 1, '133211'], ['A', 'maj', 5, '577655']].forEach(([r, q, f, exp]) => ok(grip(r, q, f) === exp, `Griff ${r}${q} Bund ${f}: ${grip(r, q, f)} statt ${exp}`));
+[['C', 'maj', 0, 'x32010'], ['A', 'min', 0, 'x02210'], ['G', 'maj', 0, '320003'], ['E', 'maj', 0, '022100'], ['D', 'maj', 0, 'xx0232'], ['E', '7', 0, '020100'], ['F', 'maj', 1, '133211'], ['A', 'maj', 5, '577655'], ['G', '5', 3, '355xxx'], ['A', '5', 0, 'x022xx'], ['E', '5', 0, '022xxx'], ['D', '5', 5, 'x577xx'], ['C', '5', 3, 'x355xx']].forEach(([r, q, f, exp]) => ok(grip(r, q, f) === exp, `Griff ${r}${q} Bund ${f}: ${grip(r, q, f)} statt ${exp}`));
 for (const r of T.CHORD_ROOTS) for (const q of Object.keys(T.CHORDS)) for (let f = 0; f <= 12; f++) {
   const p = T.chordVoicing(r, q, f), set = T.buildChord(r, q);
   p.forEach(x => ok(T.degreeOf(set, T.OPEN[x.s] + x.f) >= 0, `Griff ${r}${q} f${f}: falscher Ton`));

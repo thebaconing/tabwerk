@@ -34,6 +34,12 @@ function chordVoicing(root, q, f) {
   let bass = -1, bassF = null;
   for (let s = 0; s < 6 && bass < 0; s++) { const fr = cands.find(x => degreeOf(set, OPEN[s] + x) === 0); if (fr != null) { bass = s; bassF = fr; } }
   if (bass < 0) return [];
+  // Powerchord: Grundton, Quinte und Oktave auf den nächsten zwei Saiten
+  if (q === '5') {
+    const out = [{ s: bass, f: bassF }];
+    [[1, 7], [2, 12]].forEach(([d, iv]) => { const s = bass + d; if (s < 6) { const fr = bassF + iv - (OPEN[s] - OPEN[bass]); if (fr >= 0 && fr <= MAX_FRET) out.push({ s, f: fr }); } });
+    return out;
+  }
   const out = [{ s: bass, f: bassF }];
   for (let s = bass + 1; s < 6; s++) { const fr = cands.find(x => degreeOf(set, OPEN[s] + x) >= 0); if (fr != null) out.push({ s, f: fr }); }
   return out;
