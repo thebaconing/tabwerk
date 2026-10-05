@@ -20,9 +20,9 @@ if (!lib || !Array.isArray(lib.docs) || !lib.docs.length) {
 let doc = lib.docs.find(d => d.id === lib.currentId) || lib.docs[0];
 lib.currentId = doc.id;
 let comp = [];
-let sel = { bi: doc.blocks.length ? 0 : null, fi: null, k: null };
+let sel = { bi: doc.blocks.length ? 0 : null, fi: null, fi2: null, k: null, k2: null };
 let hist = { undo: [], redo: [], last: null };
-const ui = { replace: false, markStart: null, libConfirm: null, userScrollUntil: 0, playingK: null };
+const ui = { mode: 'after', dur: null, markStart: null, libConfirm: null, userScrollUntil: 0, multi: new Set(), chord: { root: 'A', q: 'min', fret: 0 }, clip: store.get('tabwerk-clip') };
 const prefs = Object.assign({ metro: true, loop: false, follow: true, theme: null }, store.get(PREF_KEY) || {});
 if (prefs.theme && !document.documentElement.hasAttribute('data-theme')) document.documentElement.setAttribute('data-theme', prefs.theme);
 
@@ -48,7 +48,7 @@ function restore(json) {
   Object.keys(doc).forEach(k => delete doc[k]);
   Object.assign(doc, fresh);
   if (sel.bi != null && sel.bi >= doc.blocks.length) sel.bi = doc.blocks.length ? doc.blocks.length - 1 : null;
-  sel.fi = null; sel.k = null; hist.last = null; ui.markStart = null;
+  clearSel(); hist.last = null; ui.markStart = null;
   refresh();
 }
 function undo() { if (!hist.undo.length) return; hist.redo.push(JSON.stringify(doc)); restore(hist.undo.pop()); status('Rückgängig gemacht.'); }
@@ -57,17 +57,21 @@ function redo() { if (!hist.redo.length) return; hist.undo.push(JSON.stringify(d
 function refresh(o = {}) {
   comp = computeDoc(doc);
   if (sel.bi != null && sel.fi != null) {
-    const B = comp[sel.bi];
-    const e = B && B.measures.flatMap(m => m.events).find(x => x.fi === sel.fi);
+    const evs = comp[sel.bi] ? comp[sel.bi].measures.flatMap(m => m.events) : [];
+    const e = evs.find(x => x.fi === sel.fi);
     sel.k = e ? e.k : null;
-    if (!e) sel.fi = null;
+    if (!e) { sel.fi = null; sel.fi2 = null; sel.k2 = null; }
+    if (e && sel.fi2 != null) { const e2 = evs.find(x => x.fi === sel.fi2); sel.k2 = e2 ? e2.k : null; if (!e2) sel.fi2 = null; }
   }
+  if (sel.k != null && !evByK(sel.k)) clearSel();
+  updateSelBar();
   if (!o.skipName) $('docName').value = doc.name;
   renderBlocks();
   if (!o.skipInsp) renderInspector();
   renderSheet();
   $('undo').disabled = !hist.undo.length; $('redo').disabled = !hist.redo.length;
   $('bpm').value = doc.bpm; $('bpmOut').value = doc.bpm;
+  $('docTime').value = doc.time || '4/4'; $('bpmLabel').textContent = meterOf(doc.time).compound ? '♩. =' : meterOf(doc.time).type === 8 ? '♪ =' : '♩ =';
   saveSoon();
 }
 
@@ -85,9 +89,10 @@ function relRoot(root, from, to) {
   const f = (ROOTS[from].find(x => x[0] === root) || [0, 0])[1];
   return (ROOTS[to].find(x => x[1] === f) || ROOTS[to][0])[0];
 }
-function unitOpts(withDefault) { return (withDefault ? [['', 'Standard des Musters']] : []).concat(Object.entries(UNITS).map(([k, u]) => [k, u.label])); }
+function unitOpts(withDefault) { return (withDefault ? [['', 'Standard des Musters']] : []).concat(GEN_UNITS.map(k => [k, UNITS[k].label])); }
 function fmtDate(t) { const d = new Date(t); return d.toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit', year: 'numeric' }) + ', ' + d.toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' }); }
 function slug(t) { return (t || 'tabwerk').normalize('NFKD').replace(/[̀-ͯ]/g, '').replace(/ß/g, 'ss').replace(/[^A-Za-z0-9]+/g, '_').replace(/^_|_$/g, '') || 'tabwerk'; }
+function clearSel() { sel.fi = null; sel.fi2 = null; sel.k = null; sel.k2 = null; }
 function evByK(k) { for (const B of comp) for (const M of B.measures) for (const e of M.events) if (e.k === k) return { B, e }; return null; }
 function noteLabel(e) { return `${STR_NAMES[e.s]}-Saite, Bund ${e.f} (${deNote(e.sp.letter, e.sp.alter)})`; }
 
@@ -102,7 +107,7 @@ function renderBlocks() {
   const ol = $('blocks');
   $('blockCount').textContent = doc.blocks.length ? `${doc.blocks.length}` : '';
   if (!doc.blocks.length) { ol.innerHTML = '<li class="empty">Noch keine Bausteine. Füge unten den ersten hinzu.</li>'; return; }
-  ol.innerHTML = comp.map((B, i) => `<li class="blk${i === sel.bi ? ' sel' : ''}" data-bi="${i}" draggable="true" tabindex="0" aria-label="Baustein ${i + 1}: ${h(blockTitle(B.block))}">
+  ol.innerHTML = comp.map((B, i) => `<li class="blk${i === sel.bi ? ' sel' : ''}${ui.multi.has(B.block.id) ? ' multi' : ''}" data-bi="${i}" draggable="true" tabindex="0" aria-label="Baustein ${i + 1}: ${h(blockTitle(B.block))}">
     <span class="handle" title="Ziehen zum Verschieben" aria-hidden="true">⋮⋮</span>
     <div class="blk-main"><div class="kind">${i + 1} · ${KINDS[B.block.kind]}</div><div class="blk-title">${h(blockTitle(B.block))}</div><div class="blk-meta">${blockMeta(B).map(x => `<span>${h(x)}</span>`).join('')}</div></div>
     <div class="blk-tools">
@@ -112,21 +117,34 @@ function renderBlocks() {
       <button class="btn ghost danger" data-act="del" title="Löschen" aria-label="Löschen">✕</button>
     </div></li>`).join('');
 }
+function renderMulti() {
+  const n = ui.multi.size, bar = $('multiBar');
+  bar.hidden = n < 2;
+  if (n >= 2) bar.innerHTML = `<span>${n} Bausteine markiert</span><button class="btn sm primary" data-multi="merge">Zu einer Tonfolge zusammenführen</button><button class="btn sm" data-multi="clear">Markierung aufheben</button>`;
+}
 function selectBlock(i, scroll) {
   if (sel.bi === i) return;
-  sel = { bi: i, fi: null, k: null }; ui.markStart = null;
+  sel = { bi: i, fi: null, fi2: null, k: null, k2: null }; ui.markStart = null;
   renderBlocks(); renderInspector(); markSheetSel();
   if (scroll) { const el = document.querySelector(`.tb[data-bi="${i}"]`); if (el) el.scrollIntoView({ block: 'nearest', behavior: reduced() ? 'auto' : 'smooth' }); }
 }
 function moveBlock(from, to) {
   if (to < 0 || to >= doc.blocks.length || from === to) return;
   commit(d => { const [b] = d.blocks.splice(from, 1); d.blocks.splice(to, 0, b); });
-  sel.bi = to; sel.fi = null; sel.k = null; refresh();
+  sel.bi = to; clearSel(); refresh();
 }
 $('blocks').addEventListener('click', e => {
   const li = e.target.closest('.blk'); if (!li) return;
   const i = +li.dataset.bi, act = e.target.closest('[data-act]');
+  if (!act && (e.ctrlKey || e.metaKey || e.shiftKey)) {
+    if (!ui.multi.size && sel.bi != null) ui.multi.add(doc.blocks[sel.bi].id);
+    if (e.shiftKey && sel.bi != null) { const [a, c] = [Math.min(sel.bi, i), Math.max(sel.bi, i)]; for (let x = a; x <= c; x++) ui.multi.add(doc.blocks[x].id); }
+    else { const id = doc.blocks[i].id; ui.multi.has(id) ? ui.multi.delete(id) : ui.multi.add(id); }
+    renderBlocks(); renderMulti();
+    return;
+  }
   if (!act) {
+    if (ui.multi.size) { ui.multi.clear(); renderMulti(); }
     const narrow = innerWidth < 980;
     selectBlock(i, !narrow);
     if (narrow) $('inspector').scrollIntoView({ block: 'start', behavior: reduced() ? 'auto' : 'smooth' });
@@ -135,8 +153,20 @@ $('blocks').addEventListener('click', e => {
   const a = act.dataset.act;
   if (a === 'up') moveBlock(i, i - 1);
   else if (a === 'down') moveBlock(i, i + 1);
-  else if (a === 'dup') { commit(d => { const c = JSON.parse(JSON.stringify(d.blocks[i])); c.id = uid(); d.blocks.splice(i + 1, 0, c); }); sel = { bi: i + 1, fi: null, k: null }; refresh(); status('Baustein kopiert.'); }
-  else if (a === 'del') { const t = blockTitle(doc.blocks[i]); commit(d => d.blocks.splice(i, 1)); sel = { bi: doc.blocks.length ? Math.min(i, doc.blocks.length - 1) : null, fi: null, k: null }; refresh(); status(`„${t}“ gelöscht. Rückgängig mit Strg+Z.`); }
+  else if (a === 'dup') { commit(d => { const c = JSON.parse(JSON.stringify(d.blocks[i])); c.id = uid(); d.blocks.splice(i + 1, 0, c); }); sel = { bi: i + 1, fi: null, fi2: null, k: null, k2: null }; refresh(); status('Baustein kopiert.'); }
+  else if (a === 'del') { const t = blockTitle(doc.blocks[i]); ui.multi.delete(doc.blocks[i].id); commit(d => d.blocks.splice(i, 1)); sel = { bi: doc.blocks.length ? Math.min(i, doc.blocks.length - 1) : null, fi: null, fi2: null, k: null, k2: null }; refresh(); renderMulti(); status(`„${t}“ gelöscht. Rückgängig mit Strg+Z.`); }
+});
+$('multiBar').addEventListener('click', e => {
+  const b = e.target.closest('[data-multi]'); if (!b) return;
+  if (b.dataset.multi === 'clear') { ui.multi.clear(); renderBlocks(); renderMulti(); return; }
+  const idx = doc.blocks.map((x, i) => ui.multi.has(x.id) ? i : -1).filter(i => i >= 0);
+  if (idx.length < 2) return;
+  const meter = meterOf(doc.time);
+  const merged = mergeBlocks(idx.map(i => doc.blocks[i]), meter);
+  commit(d => { for (let k = idx.length - 1; k >= 0; k--) d.blocks.splice(idx[k], 1); d.blocks.splice(idx[0], 0, merged); });
+  ui.multi.clear(); renderMulti();
+  sel = { bi: idx[0], fi: null, fi2: null, k: null, k2: null }; refresh();
+  status(`${idx.length} Bausteine zu einer freien Tonfolge zusammengeführt. Rückgängig mit Strg+Z.`);
 });
 $('blocks').addEventListener('keydown', e => {
   const li = e.target.closest('.blk'); if (!li || e.target !== li) return;
@@ -172,7 +202,7 @@ $('addGrid').addEventListener('click', e => {
   const nb = newBlock(b.dataset.kind, like && like.mode && ROOTS[like.mode].some(r => r[0] === like.root) ? like : null);
   const at = sel.bi == null ? doc.blocks.length : sel.bi + 1;
   commit(d => d.blocks.splice(at, 0, nb));
-  sel = { bi: at, fi: null, k: null }; refresh();
+  sel = { bi: at, fi: null, fi2: null, k: null, k2: null }; refresh();
   status(`${KINDS[nb.kind]} hinzugefügt.` + (nb.kind === 'free' ? ' Töne per Klick aufs Griffbrett eingeben.' : ''));
   const ins = $('inspector'); if (ins.getBoundingClientRect().top < 0 || ins.getBoundingClientRect().top > innerHeight * .6) ins.scrollIntoView({ block: 'start', behavior: reduced() ? 'auto' : 'smooth' });
 });
@@ -277,39 +307,57 @@ function inspProg(b) {
     ${chordControls(b)}
   </div>${board}`;
 }
+const DUR_LABEL = { w: 'Ganze', h: 'Halbe', q: 'Viertel', tri4: 'Viertel³', e: 'Achtel', tri8: 'Achtel³', s16: '16tel', tri16: '16tel³' };
+function freeRange() {
+  const b = cur(); if (!b || b.kind !== 'free' || sel.fi == null) return null;
+  const c = sel.fi2 != null ? sel.fi2 : sel.fi;
+  return [Math.min(sel.fi, c), Math.max(sel.fi, c)];
+}
 function inspFree(b, B) {
   const ref = b.ref;
   const set = ref ? buildScale(ref.root, ref.mode, ref.type) : null;
-  const n = sel.fi != null ? b.notes[sel.fi] : null;
-  const isNote = n && !n.rest;
-  const tech = isNote ? (n.tech || {}) : {};
+  const r = freeRange();
+  const n = r ? b.notes[sel.fi] : null;
+  const pos = n && !n.rest ? notePos(n) : [];
+  const single = pos.length === 1;
+  const tech = single ? (n.tech || {}) : {};
+  const curDur = n ? (n.dur || b.unit) : (ui.dur || b.unit);
   const notes = B.measures.flatMap(m => m.events).filter(e => e.kind === 'note');
-  const lo = 0, hi = Math.max(15, ...notes.map(e => e.f + 1));
+  const hi = Math.max(15, ...notes.flatMap(e => evFrets(e).map(f => f + 1)));
   const dots = [];
-  if (set) for (let s = 0; s < 6; s++) for (let f = 0; f <= hi; f++) { const m = OPEN[s] + f, d = degreeOf(set, m); if (d >= 0) dots.push({ s, f, cls: 'ghost', label: deNote(set[d].letter, set[d].alter), blue: set[d].blue }); }
-  if (isNote) { const i = dots.findIndex(d => d.s === n.s && d.f === n.f); if (i >= 0) dots.splice(i, 1); dots.push({ s: n.s, f: n.f, cls: 'on-root', label: deNote(...Object.values(spellMidi(OPEN[n.s] + n.f, set, ref ? fifthsOf(ref.root, ref.mode) : 0))), end: true }); }
-  const selTxt = sel.fi == null ? 'Kein Ton ausgewählt: Klicks hängen neue Töne ans Ende an.' : n.rest ? `Pause ${sel.fi + 1} ausgewählt.` : `Ton ${sel.fi + 1} ausgewählt: ${STR_NAMES[n.s]}-Saite, Bund ${n.f}.`;
+  if (set) for (let s2 = 0; s2 < 6; s2++) for (let f = 0; f <= hi; f++) { const d = degreeOf(set, OPEN[s2] + f); if (d >= 0 && !pos.some(p => p.s === s2 && p.f === f)) dots.push({ s: s2, f, cls: 'ghost', label: deNote(set[d].letter, set[d].alter), blue: set[d].blue }); }
+  pos.forEach(p => { const sp = spellMidi(OPEN[p.s] + p.f, set, ref ? fifthsOf(ref.root, ref.mode) : 0); dots.push({ s: p.s, f: p.f, cls: 'on-root', label: deNote(sp.letter, sp.alter), end: true }); });
+  const cnt = r ? r[1] - r[0] + 1 : 0;
+  const selTxt = !r ? 'Nichts ausgewählt: neue Töne kommen ans Ende.' : cnt > 1 ? `${cnt} Einträge markiert (${r[0] + 1} bis ${r[1] + 1}).` : n.rest ? `Pause ${r[0] + 1} ausgewählt.` : pos.length > 1 ? `Akkord ${r[0] + 1} ausgewählt: ${pos.length} Töne.` : `Ton ${r[0] + 1} ausgewählt: ${STR_NAMES[pos[0].s]}-Saite, Bund ${pos[0].f}.`;
+  const modeHint = { after: 'Klick aufs Griffbrett fügt einen Ton nach der Auswahl ein.', replace: 'Klick aufs Griffbrett ersetzt den ausgewählten Ton.', stack: 'Klick aufs Griffbrett legt Töne zum ausgewählten Akkord dazu oder nimmt sie wieder weg.' }[ui.mode];
+  const C = ui.chord;
   return `<div class="grid">
     ${ctl('Bezugsleiter', selHTML('reftype', [['none', 'keine'], ['scale', 'Tonleiter'], ['penta', 'Pentatonik'], ['blues', 'Blues']], ref ? ref.type : 'none'))}
     ${ref ? ctl('Tongeschlecht', segHTML('refmode', [['minor', 'Moll'], ['major', 'Dur']], ref.mode)) + ctl('Grundton', selHTML('refroot', rootOpts(ref.mode), ref.root)) : ''}
-    ${ctl('Notenwert', selHTML('unit', unitOpts(false), b.unit))}
+  </div>
+  <div class="grid">
+    ${ctl(`Länge${r ? ' <em>(gilt für die Auswahl)</em>' : ' <em>(für neue Töne)</em>'}`, `<div class="chips" role="group" aria-label="Notenlänge">${FREE_UNITS.map(k => `<button type="button" class="chip" data-dur="${k}" aria-pressed="${k === curDur}">${DUR_LABEL[k]}</button>`).join('')}</div>`, 'wide')}
+    ${ctl('Klick aufs Griffbrett', segHTML('insmode', [['after', 'Einfügen'], ['replace', 'Ersetzen'], ['stack', 'Akkord stapeln']], ui.mode))}
+    ${ctl('Akkordgriff einfügen', `<div class="toolbar"><select id="chRoot" aria-label="Grundton" style="width:auto">${CHORD_ROOTS.map(x => `<option value="${x}"${x === C.root ? ' selected' : ''}>${deName(x)}</option>`).join('')}</select>
+      <select id="chQ" aria-label="Akkordart" style="width:auto">${Object.entries(CHORDS).map(([k, c]) => `<option value="${k}"${k === C.q ? ' selected' : ''}>${c.sym || 'Dur'}</option>`).join('')}</select>
+      <select id="chFret" aria-label="Lage" style="width:auto">${Array.from({ length: 13 }, (_, i) => `<option value="${i}"${i === C.fret ? ' selected' : ''}>${i === 0 ? 'offen' : 'Bund ' + i}</option>`).join('')}</select>
+      <button class="btn sm" data-do="chordIns">Einfügen</button></div>`, 'wide')}
   </div>
   <div class="toolbar" role="toolbar" aria-label="Töne bearbeiten">
-    ${segHTML('insmode', [['after', 'Einfügen'], ['replace', 'Ersetzen']], ui.replace ? 'replace' : 'after', 'aria-label="Klick aufs Griffbrett"')}
     <button class="btn sm" data-do="rest">Pause</button>
-    <button class="btn sm" data-do="del"${sel.fi == null ? ' disabled' : ''}>Löschen</button>
-    <button class="btn sm" data-do="prev" aria-label="Vorheriger Ton"${!b.notes.length ? ' disabled' : ''}>◀</button>
-    <button class="btn sm" data-do="next" aria-label="Nächster Ton"${!b.notes.length ? ' disabled' : ''}>▶</button>
-    <button class="btn sm" data-do="desel"${sel.fi == null ? ' disabled' : ''}>Auswahl aufheben</button>
+    <button class="btn sm" data-do="del"${!r ? ' disabled' : ''}>Löschen</button>
+    <button class="btn sm" data-do="prev" aria-label="Vorheriger Eintrag"${!b.notes.length ? ' disabled' : ''}>◀</button>
+    <button class="btn sm" data-do="next" aria-label="Nächster Eintrag"${!b.notes.length ? ' disabled' : ''}>▶</button>
+    <button class="btn sm" data-do="desel"${!r ? ' disabled' : ''}>Auswahl aufheben</button>
     <span class="sep"></span>
-    <button class="btn sm" data-tech="bend1" aria-pressed="${tech.bend === 1}"${isNote ? '' : ' disabled'}>Bending ½</button>
-    <button class="btn sm" data-tech="bend2" aria-pressed="${tech.bend === 2}"${isNote ? '' : ' disabled'}>Bending 1</button>
-    <button class="btn sm" data-tech="release" aria-pressed="${!!tech.release}"${isNote && tech.bend ? '' : ' disabled'}>Release</button>
-    <button class="btn sm" data-tech="legato" aria-pressed="${!!tech.legato}"${isNote ? '' : ' disabled'} title="Bindung zum nächsten Ton: aufwärts Hammer-on, abwärts Pull-off">Hammer-on / Pull-off</button>
-    <button class="btn sm" data-tech="slide" aria-pressed="${!!tech.slide}"${isNote ? '' : ' disabled'} title="Slide zum nächsten Ton">Slide</button>
+    <button class="btn sm" data-tech="bend1" aria-pressed="${tech.bend === 1}"${single ? '' : ' disabled'}>Bending ½</button>
+    <button class="btn sm" data-tech="bend2" aria-pressed="${tech.bend === 2}"${single ? '' : ' disabled'}>Bending 1</button>
+    <button class="btn sm" data-tech="release" aria-pressed="${!!tech.release}"${single && tech.bend ? '' : ' disabled'}>Release</button>
+    <button class="btn sm" data-tech="legato" aria-pressed="${!!tech.legato}"${single ? '' : ' disabled'} title="Bindung zum nächsten Ton: aufwärts Hammer-on, abwärts Pull-off">Hammer-on / Pull-off</button>
+    <button class="btn sm" data-tech="slide" aria-pressed="${!!tech.slide}"${single ? '' : ' disabled'} title="Slide zum nächsten Ton">Slide</button>
   </div>
-  <p class="hint">${selTxt} Tastatur: Pfeiltasten wählen, Entf löscht, P setzt eine Pause.</p>
-  <div class="fb-wrap" id="board">${renderFretboard({ lo, hi, dots, hit: true, fw: 34 })}</div>`;
+  <p class="hint">${selTxt} ${modeHint} Umschalt-Klick in der Tabulatur markiert einen Bereich. Tastatur: Pfeiltasten wählen (mit Umschalt erweitern), Entf löscht, P setzt eine Pause, Strg+C/X/V kopiert, schneidet aus, fügt ein.</p>
+  <div class="fb-wrap" id="board">${renderFretboard({ lo: 0, hi, dots, hit: true, fw: 34 })}</div>`;
 }
 // Reihe
 function inspSeries(b) {
@@ -382,9 +430,11 @@ ins.addEventListener('click', e => {
   const segBtn = e.target.closest('.seg button');
   if (segBtn) {
     const key = segBtn.parentElement.dataset.seg, v = segBtn.dataset.v;
-    if (key === 'insmode') { ui.replace = v === 'replace'; renderInspector(); return; }
+    if (key === 'insmode') { ui.mode = v; renderInspector(); return; }
     setField(key, v); return;
   }
+  const du = e.target.closest('[data-dur]');
+  if (du) { setDur(du.dataset.dur); return; }
   const chip = e.target.closest('[data-chip]');
   if (chip) { commit(d => { d.blocks[sel.bi][chip.dataset.chip] = chip.dataset.v; }); return; }
   const hit = e.target.closest('.fb-hit');
@@ -416,7 +466,15 @@ ins.addEventListener('click', e => {
   else if (a === 'del') freeDelete();
   else if (a === 'prev') freeMove(-1);
   else if (a === 'next') freeMove(1);
-  else if (a === 'desel') { sel.fi = null; sel.k = null; renderInspector(); markSheetSel(); }
+  else if (a === 'desel') { clearSel(); renderInspector(); markSheetSel(); }
+  else if (a === 'chordIns') {
+    ui.chord = { root: $('chRoot').value, q: $('chQ').value, fret: +$('chFret').value };
+    const pos = chordVoicing(ui.chord.root, ui.chord.q, ui.chord.fret);
+    if (!pos.length) { status('In dieser Lage gibt es keinen Griff für diesen Akkord.'); return; }
+    freeInsert({ pos });
+    pos.forEach(p => Player.preview(OPEN[p.s] + p.f));
+    status(`${chordName(ui.chord.root, ui.chord.q)} eingefügt: ${pos.map(p => STR_NAMES[p.s] + p.f).join(' ')}.`);
+  }
   else if (a === 'convert') convertSelected();
 });
 ins.addEventListener('change', e => {
@@ -433,12 +491,12 @@ ins.addEventListener('input', e => {
 });
 
 // Klick aufs Griffbrett
-function boardClick(s, f) {
+function boardClick(s2, f) {
   const b = cur(); if (!b) return;
-  const m = OPEN[s] + f;
+  const m = OPEN[s2] + f;
   if (b.kind === 'scale') {
     const { shape } = blockShape(b);
-    const i = shape.notes.findIndex(n => n.s === s && n.f === f);
+    const i = shape.notes.findIndex(n => n.s === s2 && n.f === f);
     if (i < 0) { status('Dieser Ton gehört nicht zur Lage. Bitte einen markierten Ton anklicken.'); return; }
     Player.preview(m);
     if (ui.markStart == null) { ui.markStart = i; renderInspector(); status('Startton gesetzt. Jetzt den Endton anklicken.'); return; }
@@ -447,38 +505,65 @@ function boardClick(s, f) {
     status('Ausschnitt gesetzt.');
     return;
   }
-  if (b.kind === 'free') {
-    Player.preview(m);
-    if (ui.replace && sel.fi != null) {
-      const fi = sel.fi;
-      commit(d => { const n = d.blocks[sel.bi].notes[fi]; d.blocks[sel.bi].notes[fi] = { s, f, tech: n && n.tech ? n.tech : null }; });
-      freeMove(1, true);
-    } else freeInsert({ s, f });
+  if (b.kind !== 'free') return;
+  Player.preview(m);
+  const r = freeRange(), n = r ? b.notes[sel.fi] : null;
+  if (ui.mode === 'stack' && n && !n.rest) {
+    const fi = sel.fi;
+    commit(d => {
+      const x = d.blocks[sel.bi].notes[fi];
+      let pos = notePos(x).slice();
+      if (pos.some(p => p.s === s2 && p.f === f)) pos = pos.filter(p => !(p.s === s2 && p.f === f));
+      else pos = pos.filter(p => p.s !== s2).concat({ s: s2, f }).sort((a, c) => a.s - c.s);
+      if (!pos.length) { d.blocks[sel.bi].notes.splice(fi, 1); return; }
+      const y = { pos };
+      if (x.dur) y.dur = x.dur;
+      if (pos.length === 1 && x.tech) y.tech = x.tech;
+      d.blocks[sel.bi].notes[fi] = y;
+    });
+    return;
   }
+  if (ui.mode === 'replace' && n) {
+    const fi = sel.fi;
+    commit(d => { const x = d.blocks[sel.bi].notes[fi]; const y = { pos: [{ s: s2, f }], dur: x.dur || ui.dur || b.unit }; if (x.tech && !x.rest) y.tech = x.tech; d.blocks[sel.bi].notes[fi] = y; });
+    freeMove(1);
+    return;
+  }
+  freeInsertMany([{ pos: [{ s: s2, f }], dur: ui.dur || b.unit }]);
 }
-function freeInsert(n) {
-  const b = cur(); if (!b || b.kind !== 'free') return;
-  const at = sel.fi == null ? b.notes.length : sel.fi + 1;
-  sel.fi = at;
-  commit(d => d.blocks[sel.bi].notes.splice(at, 0, n));
+function clone(x) { return JSON.parse(JSON.stringify(x)); }
+function freeInsertMany(list) {
+  const b = cur(); if (!b || b.kind !== 'free' || !list.length) return;
+  const r = freeRange(), at = r ? r[1] + 1 : b.notes.length;
+  sel.fi = at + list.length - 1; sel.fi2 = list.length > 1 ? at : null; sel.k2 = null;
+  commit(d => d.blocks[sel.bi].notes.splice(at, 0, ...clone(list)));
   scrollSelIntoView();
 }
+function freeInsert(n) { freeInsertMany([Object.assign({ dur: ui.dur || cur().unit }, n)]); }
 function freeDelete() {
-  const b = cur(); if (!b || b.kind !== 'free' || sel.fi == null) return;
-  const at = sel.fi;
-  sel.fi = b.notes.length > 1 ? Math.max(0, at - 1) : null;
-  commit(d => d.blocks[sel.bi].notes.splice(at, 1));
+  const b = cur(), r = freeRange(); if (!r) return;
+  sel.fi = r[0] > 0 ? r[0] - 1 : (b.notes.length > r[1] - r[0] + 1 ? 0 : null); sel.fi2 = null; sel.k2 = null;
+  commit(d => d.blocks[sel.bi].notes.splice(r[0], r[1] - r[0] + 1));
 }
-function freeMove(dir, keepEnd) {
+function freeMove(dir, extend) {
   const b = cur(); if (!b || b.kind !== 'free' || !b.notes.length) return;
-  if (sel.fi == null) sel.fi = dir > 0 ? 0 : b.notes.length - 1;
-  else sel.fi = Math.max(0, Math.min(b.notes.length - 1, sel.fi + dir));
+  const last = b.notes.length - 1, clamp = x => Math.max(0, Math.min(last, x));
+  if (sel.fi == null) { sel.fi = dir > 0 ? 0 : last; sel.fi2 = null; }
+  else if (extend) { const ext = clamp((sel.fi2 != null ? sel.fi2 : sel.fi) + dir); sel.fi2 = ext === sel.fi ? null : ext; }
+  else { const r = freeRange(); sel.fi = clamp((dir > 0 ? r[1] : r[0]) + dir); sel.fi2 = null; }
+  sel.k2 = null;
   refresh(); scrollSelIntoView();
+}
+function setDur(k) {
+  ui.dur = k;
+  const r = freeRange();
+  if (r) commit(d => { for (let i = r[0]; i <= r[1]; i++) d.blocks[sel.bi].notes[i].dur = k; });
+  else renderInspector();
 }
 function toggleTech(t) {
   const b = cur(); if (!b || b.kind !== 'free' || sel.fi == null) return;
   commit(d => {
-    const n = d.blocks[sel.bi].notes[sel.fi]; if (!n || n.rest) return;
+    const n = d.blocks[sel.bi].notes[sel.fi]; if (!n || n.rest || notePos(n).length !== 1) return;
     const tc = Object.assign({}, n.tech || {});
     if (t === 'bend1') { tc.bend = tc.bend === 1 ? 0 : 1; if (!tc.bend) delete tc.release; }
     if (t === 'bend2') { tc.bend = tc.bend === 2 ? 0 : 2; if (!tc.bend) delete tc.release; }
@@ -486,46 +571,114 @@ function toggleTech(t) {
     if (t === 'legato') { tc.legato = !tc.legato; if (tc.legato) tc.slide = false; }
     if (t === 'slide') { tc.slide = !tc.slide; if (tc.slide) tc.legato = false; }
     Object.keys(tc).forEach(k => { if (!tc[k]) delete tc[k]; });
-    n.tech = Object.keys(tc).length ? tc : null;
+    if (Object.keys(tc).length) n.tech = tc; else delete n.tech;
   });
 }
 function convertSelected() {
   const b = cur(); if (!b || b.kind === 'free') return;
-  const r = sel.k != null ? evByK(sel.k) : null, fi = r ? r.e.ni : null;
-  commit(d => { d.blocks[sel.bi] = toFree(d.blocks[sel.bi]); });
-  sel.fi = fi; refresh();
+  const evs = comp[sel.bi].measures.flatMap(m => m.events);
+  const r = sel.k != null ? evByK(sel.k) : null;
+  const fi = r ? evs.indexOf(r.e) : null;
+  commit(d => { d.blocks[sel.bi] = toFree(d.blocks[sel.bi], meterOf(d.time)); });
+  sel.fi = fi; sel.fi2 = null; sel.k2 = null; refresh();
   status('In freie Tonfolge umgewandelt. Rückgängig mit Strg+Z.');
+}
+
+// ---------- Auswahl, Zwischenablage ----------
+function rangeEvents() {
+  if (sel.k == null) return [];
+  const all = comp.flatMap(B => B.measures.flatMap(m => m.events));
+  const a = all.findIndex(e => e.k === sel.k), c = all.findIndex(e => e.k === (sel.k2 != null ? sel.k2 : sel.k));
+  if (a < 0 || c < 0) return [];
+  const [i, j] = a <= c ? [a, c] : [c, a];
+  return all.slice(i, j + 1);
+}
+function selKeys() { return new Set(rangeEvents().filter(e => e.k != null).map(e => e.k)); }
+function refOfBlock(b) {
+  if (!b) return null;
+  if (b.kind === 'free') return b.ref;
+  if (b.kind === 'exercise' || b.kind === 'scale') return { type: b.type, root: b.root, mode: b.mode };
+  if (b.kind === 'prog') return { type: 'scale', root: b.root, mode: b.mode };
+  return null;
+}
+function selInOneFree() { const b = cur(); return !!(b && b.kind === 'free' && sel.fi != null && (sel.k2 == null || sel.fi2 != null)); }
+function copySel() {
+  const evs = rangeEvents(); if (!evs.length) { status('Erst Töne in der Tabulatur markieren: Klick, dann Umschalt-Klick.'); return false; }
+  ui.clip = { notes: evs.map(evToNote), ref: refOfBlock(cur()) };
+  store.set('tabwerk-clip', ui.clip);
+  const n = ui.clip.notes.filter(x => !x.rest).length;
+  status(`${n} ${n === 1 ? 'Ton' : 'Töne'} kopiert. In einer freien Tonfolge mit Einfügen oder Strg+V einsetzen.`);
+  updateSelBar();
+  return true;
+}
+function cutSel() {
+  if (!selInOneFree()) { status('Ausschneiden geht nur in freien Tonfolgen. Übungen lassen sich kopieren oder vorher umwandeln.'); return; }
+  if (copySel()) { freeDelete(); status('Ausgeschnitten.'); }
+}
+function pasteSel() {
+  if (!ui.clip || !ui.clip.notes || !ui.clip.notes.length) { status('Die Zwischenablage ist leer.'); return; }
+  const b = cur();
+  if (b && b.kind === 'free') { freeInsertMany(ui.clip.notes); status('Eingefügt.'); return; }
+  const nb = newBlock('free', ui.clip.ref || undefined);
+  if (!ui.clip.ref) nb.ref = null;
+  nb.notes = clone(ui.clip.notes); nb.title = 'Eigene Tonfolge';
+  const at = sel.bi == null ? doc.blocks.length : sel.bi + 1;
+  commit(d => d.blocks.splice(at, 0, nb));
+  sel = { bi: at, fi: null, fi2: null, k: null, k2: null }; refresh();
+  status('Als neue freie Tonfolge eingefügt.');
+}
+function deleteSel() {
+  if (selInOneFree()) { freeDelete(); return; }
+  if (sel.k != null) status('Töne in Übungen, Skalen und Akkorden lassen sich nicht einzeln löschen. Erst „In freie Tonfolge umwandeln“.');
+}
+function updateSelBar() {
+  const bar = $('selbar'); if (!bar) return;
+  const evs = rangeEvents(), n = evs.filter(e => e.kind === 'note').length, hasClip = !!(ui.clip && ui.clip.notes && ui.clip.notes.length);
+  if (!evs.length && !hasClip) { bar.hidden = true; return; }
+  bar.hidden = false;
+  const free = selInOneFree();
+  bar.innerHTML = `<span class="muted small">${evs.length ? `${n} ${n === 1 ? 'Ton' : 'Töne'} markiert` : 'Zwischenablage: ' + ui.clip.notes.filter(x => !x.rest).length + ' Töne'}</span>
+    <button class="btn sm" data-sb="copy"${evs.length ? '' : ' disabled'}>Kopieren</button>
+    <button class="btn sm" data-sb="cut"${free ? '' : ' disabled'}>Ausschneiden</button>
+    <button class="btn sm" data-sb="paste"${hasClip ? '' : ' disabled'} title="In die ausgewählte freie Tonfolge, sonst als neue Tonfolge">Einfügen</button>
+    <button class="btn sm" data-sb="del"${free ? '' : ' disabled'}>Löschen</button>
+    ${evs.length ? '<button class="btn sm ghost" data-sb="clear">Markierung aufheben</button>' : ''}`;
 }
 
 // ---------- Tabulatur ----------
 function renderSheet() {
   const el = $('sheet');
   if (!comp.length) { el.innerHTML = '<div class="empty">Die Tabulatur erscheint hier, sobald es Bausteine gibt.</div>'; $('sheetInfo').textContent = ''; return; }
+  const meter = comp[0].meter;
   const totalM = comp.reduce((a, B) => a + B.measures.length, 0);
-  const secs = Math.round(totalM * 4 * 60 / doc.bpm);
-  $('sheetInfo').textContent = `${totalM} Takte · etwa ${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, '0')} Minuten bei ${doc.bpm} bpm`;
+  const secs = Math.round(totalM * meter.len / meter.beat * 60 / doc.bpm);
+  $('sheetInfo').textContent = `${totalM} Takte im ${meter.label} · etwa ${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, '0')} Minuten · Klick wählt einen Ton, Umschalt-Klick einen Bereich`;
+  const keys = selKeys();
   el.innerHTML = comp.map((B, i) => {
-    const svgs = B.measures.map((M, mi) => measureSvg(M, B.unit, { selK: sel.k, firstOfBlock: mi === 0, lastOfDoc: i === comp.length - 1 && mi === B.measures.length - 1 })).join('');
-    return `<div class="tb${i === sel.bi ? ' sel' : ''}" data-bi="${i}"><div class="tb-head" data-head="${i}"><span class="kind">${i + 1} · ${KINDS[B.block.kind]}</span><h3>${h(blockTitle(B.block))}</h3><span class="muted small">${h(B.unit.label)}</span>
+    const svgs = B.measures.map((M, mi) => measureSvg(M, B.meter, { sel: keys, firstOfBlock: mi === 0, showTime: M.no === 1, lastOfDoc: i === comp.length - 1 && mi === B.measures.length - 1 })).join('');
+    const ul = B.block.kind === 'free' ? 'eigene Längen' : B.unit.label;
+    return `<div class="tb${i === sel.bi ? ' sel' : ''}" data-bi="${i}"><div class="tb-head" data-head="${i}"><span class="kind">${i + 1} · ${KINDS[B.block.kind]}</span><h3>${h(blockTitle(B.block))}</h3><span class="muted small">${h(ul)}</span>
       <button class="btn sm" data-playb="${i}">▶ abspielen</button></div>
       ${selNoteBox(B, i)}<div class="staff">${svgs || '<span class="hint">Noch keine Töne.</span>'}</div></div>`;
   }).join('');
 }
 function selNoteBox(B, i) {
   if (i !== sel.bi || sel.k == null || B.block.kind === 'free') return '';
-  const r = evByK(sel.k); if (!r) return '';
-  return `<div class="note-box">Ausgewählt: ${h(noteLabel(r.e))}. Einzelne Töne lassen sich in einer freien Tonfolge ändern. <button class="btn sm" data-do="convert">In freie Tonfolge umwandeln</button></div>`;
+  const r = evByK(sel.k); if (!r || r.B.bi !== i) return '';
+  return `<div class="note-box">Ausgewählt: ${h(noteLabel(r.e))}. Mit Umschalt-Klick einen Bereich markieren und kopieren, oder den Baustein umwandeln, um Töne direkt zu ändern. <button class="btn sm" data-do="convert">In freie Tonfolge umwandeln</button></div>`;
 }
 function markSheetSel() {
   document.querySelectorAll('.tb').forEach(t => t.classList.toggle('sel', +t.dataset.bi === sel.bi));
   document.querySelectorAll('.staff g.n.sel').forEach(g => g.classList.remove('sel'));
-  if (sel.k != null) { const g = document.querySelector(`.staff g.n[data-k="${sel.k}"]`); if (g) g.classList.add('sel'); }
+  selKeys().forEach(k => { const g = document.querySelector(`.staff g.n[data-k="${k}"]`); if (g) g.classList.add('sel'); });
   document.querySelectorAll('.note-box').forEach(n => n.remove());
   if (sel.bi != null && comp[sel.bi]) { const t = document.querySelector(`.tb[data-bi="${sel.bi}"] .staff`); const box = selNoteBox(comp[sel.bi], sel.bi); if (t && box) t.insertAdjacentHTML('beforebegin', box); }
+  updateSelBar();
 }
 function scrollSelIntoView() {
-  if (sel.k == null) return;
-  const g = document.querySelector(`.staff g.n[data-k="${sel.k}"]`); if (!g) return;
+  const k = sel.fi2 != null ? sel.k2 : sel.k;
+  if (k == null) return;
+  const g = document.querySelector(`.staff g.n[data-k="${k}"]`); if (!g) return;
   const r = g.getBoundingClientRect(), dockH = document.querySelector('.dock').offsetHeight;
   if (r.top < 10 || r.bottom > innerHeight - dockH - 10) g.ownerSVGElement.scrollIntoView({ block: 'center', behavior: reduced() ? 'auto' : 'smooth' });
 }
@@ -535,14 +688,26 @@ $('sheet').addEventListener('click', e => {
   const g = e.target.closest('g.n');
   if (g) {
     const k = +g.dataset.k, r = evByK(k); if (!r) return;
-    const bi = r.B.bi, changed = bi !== sel.bi;
-    sel = { bi, k, fi: r.e.fi != null ? r.e.fi : null }; ui.markStart = null;
-    if (r.e.kind === 'note') Player.preview(r.e.m);
-    if (changed) renderBlocks();
+    const bi = r.B.bi;
+    if (e.shiftKey && sel.k != null) {
+      sel.k2 = k === sel.k ? null : k;
+      sel.fi2 = bi === sel.bi && sel.fi != null && r.e.fi != null && sel.k2 != null ? r.e.fi : null;
+    } else {
+      const changed = bi !== sel.bi;
+      sel = { bi, k, k2: null, fi: r.e.fi != null ? r.e.fi : null, fi2: null }; ui.markStart = null;
+      if (r.e.kind === 'note') [r.e].concat(r.e.extra || []).forEach(t => Player.preview(t.m));
+      if (changed) renderBlocks();
+    }
     renderInspector(); markSheetSel();
     return;
   }
   const hd = e.target.closest('[data-head]'); if (hd) selectBlock(+hd.dataset.head);
+});
+$('selbar').addEventListener('click', e => {
+  const b = e.target.closest('[data-sb]'); if (!b) return;
+  const a = b.dataset.sb;
+  if (a === 'copy') copySel(); else if (a === 'cut') cutSel(); else if (a === 'paste') pasteSel(); else if (a === 'del') deleteSel();
+  else if (a === 'clear') { clearSel(); renderInspector(); markSheetSel(); }
 });
 
 // ---------- Wiedergabe ----------
@@ -591,21 +756,25 @@ $('docName').addEventListener('input', e => { const v = e.target.value; commit(d
 $('undo').onclick = undo; $('redo').onclick = redo;
 addEventListener('keydown', e => {
   const t = e.target, typing = t.matches && t.matches('input[type=text], input:not([type]), textarea, select, .docname');
-  const mod = e.ctrlKey || e.metaKey;
+  const mod = e.ctrlKey || e.metaKey, key = e.key.toLowerCase();
   if (e.key === 'Escape') { closeMenu(); closeLib(); if (ui.markStart != null) { ui.markStart = null; renderInspector(); } return; }
   if (typing) return;
-  if (mod && e.key.toLowerCase() === 'z' && !e.shiftKey) { e.preventDefault(); undo(); return; }
-  if (mod && (e.key.toLowerCase() === 'y' || (e.key.toLowerCase() === 'z' && e.shiftKey))) { e.preventDefault(); redo(); return; }
+  if (mod && key === 'z' && !e.shiftKey) { e.preventDefault(); undo(); return; }
+  if (mod && (key === 'y' || (key === 'z' && e.shiftKey))) { e.preventDefault(); redo(); return; }
   if (!$('lib').hidden) return;
+  if (mod && key === 'c' && sel.k != null && !String(getSelection())) { e.preventDefault(); copySel(); return; }
+  if (mod && key === 'x' && sel.k != null) { e.preventDefault(); cutSel(); return; }
+  if (mod && key === 'v' && ui.clip) { e.preventDefault(); pasteSel(); return; }
   const b = cur();
   if (b && b.kind === 'free' && !t.closest('.blk')) {
     if (e.key === 'Delete' || e.key === 'Backspace') { if (sel.fi != null) { e.preventDefault(); freeDelete(); } }
-    else if (e.key === 'ArrowLeft') { e.preventDefault(); freeMove(-1); }
-    else if (e.key === 'ArrowRight') { e.preventDefault(); freeMove(1); }
-    else if (e.key.toLowerCase() === 'p' && !mod) { e.preventDefault(); freeInsert({ rest: true }); }
+    else if (e.key === 'ArrowLeft') { e.preventDefault(); freeMove(-1, e.shiftKey); }
+    else if (e.key === 'ArrowRight') { e.preventDefault(); freeMove(1, e.shiftKey); }
+    else if (key === 'p' && !mod) { e.preventDefault(); freeInsert({ rest: true }); }
   }
   if (['PageUp', 'PageDown', 'ArrowUp', 'ArrowDown', 'Home', 'End'].includes(e.key)) pauseFollow();
 });
+$('docTime').addEventListener('change', e => { const v = e.target.value; commit(d => { d.time = v; }); status(`Taktart ${v}. Jeder Baustein beginnt weiter auf einem neuen Takt.`); });
 
 // ---------- Bibliothek ----------
 function openLib() { ui.libConfirm = null; renderLib(); $('lib').hidden = false; $('libClose').focus(); }
@@ -622,7 +791,7 @@ function renderLib() {
 function switchDoc(d) {
   Player.stop();
   doc = d; lib.currentId = d.id;
-  sel = { bi: d.blocks.length ? 0 : null, fi: null, k: null }; hist = { undo: [], redo: [], last: null }; ui.markStart = null;
+  sel = { bi: d.blocks.length ? 0 : null, fi: null, fi2: null, k: null, k2: null }; hist = { undo: [], redo: [], last: null }; ui.markStart = null; ui.multi.clear(); renderMulti();
   refresh();
 }
 $('libBtn').onclick = openLib;

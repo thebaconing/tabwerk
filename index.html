@@ -16,6 +16,7 @@
   <header class="top">
     <div class="brand"><span class="logo" aria-hidden="true"></span>Tabwerk</div>
     <input id="docName" class="docname" aria-label="Name der Übungsfolge" maxlength="80">
+    <label class="timesel"><span class="label">Takt</span><select id="docTime" aria-label="Taktart"><option>4/4</option><option>3/4</option><option>2/4</option><option>5/4</option><option>6/8</option><option>12/8</option></select></label>
     <div class="top-actions">
       <button class="btn ghost" id="undo" title="Rückgängig (Strg+Z)" aria-label="Rückgängig">↶</button>
       <button class="btn ghost" id="redo" title="Wiederholen (Strg+Y)" aria-label="Wiederholen">↷</button>
@@ -38,7 +39,9 @@
   <main class="work">
     <section class="col-blocks" aria-label="Bausteine">
       <div class="col-head"><h2>Bausteine</h2><span class="muted" id="blockCount"></span></div>
+      <div class="multibar" id="multiBar" hidden></div>
       <ol class="blocks" id="blocks"></ol>
+      <p class="hint small">Strg-Klick oder Umschalt-Klick markiert mehrere Bausteine, um sie zu einer Tonfolge zusammenzuführen.</p>
       <div class="add">
         <span class="label">Hinzufügen</span>
         <div class="add-grid" id="addGrid">
@@ -75,11 +78,12 @@
   <div class="dock-in">
     <button class="btn primary play" id="play">▶ Alles abspielen</button>
     <button class="btn" id="playBlock">▶ Baustein</button>
-    <div class="tempo"><label for="bpm">♩ =</label><input type="range" id="bpm" min="30" max="240" step="1"><output id="bpmOut" for="bpm"></output></div>
+    <div class="tempo"><label for="bpm" id="bpmLabel">♩ =</label><input type="range" id="bpm" min="30" max="240" step="1"><output id="bpmOut" for="bpm"></output></div>
     <label class="tg"><input type="checkbox" id="metro" checked> Metronom</label>
     <label class="tg"><input type="checkbox" id="loop"> Schleife</label>
     <label class="tg"><input type="checkbox" id="follow" checked> mitscrollen</label>
     <span class="status" id="status" role="status" aria-live="polite"></span>
+    <div class="selbar" id="selbar" hidden></div>
   </div>
 </footer>
 <!--/BODY-->

@@ -7,21 +7,32 @@ function pitchXml(e) {
   const oct = Math.floor((written - e.sp.alter) / 12) - 1;
   return `<pitch><step>${LETTERS[e.sp.letter]}</step>${e.sp.alter ? `<alter>${e.sp.alter}</alter>` : ''}<octave>${oct}</octave></pitch>`;
 }
-// Balken je Viertelschlag
-function beamInfo(events) {
-  const res = new Array(events.length).fill(null);
+// Balken je Schlag: Ebene 1 über alle Achtel und kürzer, Ebene 2/3 über Sechzehntel/32stel
+const BEAMS = { eighth: 1, '16th': 2, '32nd': 3 };
+function beamInfo(events, beatLen) {
+  const res = events.map(() => ({}));
   let pos = 0, beat = [];
   const flush = () => {
-    const ns = beat.filter(i => events[i].kind === 'note' && events[i].type !== 'quarter');
-    if (ns.length > 1) ns.forEach((i, k) => res[i] = k === 0 ? 'begin' : k === ns.length - 1 ? 'end' : 'continue');
+    const ns = beat.filter(i => events[i].kind === 'note' && BEAMS[events[i].type]);
+    if (ns.length > 1) {
+      for (let lv = 1; lv <= 3; lv++) {
+        ns.forEach((i, k) => {
+          if (BEAMS[events[i].type] < lv) return;
+          const prev = k > 0 && BEAMS[events[ns[k - 1]].type] >= lv, next = k < ns.length - 1 && BEAMS[events[ns[k + 1]].type] >= lv;
+          if (lv === 1) res[i][1] = k === 0 ? 'begin' : k === ns.length - 1 ? 'end' : 'continue';
+          else res[i][lv] = prev && next ? 'continue' : prev ? 'end' : next ? 'begin' : (k === 0 ? 'forward hook' : 'backward hook');
+        });
+      }
+    }
     beat = [];
   };
-  events.forEach((e, i) => { if (pos > 0 && pos % DIV === 0) flush(); beat.push(i); pos += e.dur; });
+  events.forEach((e, i) => { if (pos > 0 && pos % beatLen === 0) flush(); beat.push(i); pos += e.dur; });
   flush();
   return res;
 }
 function toMusicXML(doc, comp) {
   let out = '', first = true, curFifths = null;
+  const meter = meterOf(doc.time);
   comp.forEach(B => {
     B.measures.forEach((M, mi) => {
       out += `<measure number="${M.no}">`;
@@ -29,11 +40,11 @@ function toMusicXML(doc, comp) {
       const fifths = key ? fifthsOf(key.root, key.mode) : (first ? 0 : null);
       if (first) {
         curFifths = fifths;
-        out += `<attributes><divisions>${DIV}</divisions><key><fifths>${fifths}</fifths>${key ? `<mode>${key.mode}</mode>` : ''}</key><time><beats>4</beats><beat-type>4</beat-type></time>` +
+        out += `<attributes><divisions>${DIV}</divisions><key><fifths>${fifths}</fifths>${key ? `<mode>${key.mode}</mode>` : ''}</key><time><beats>${meter.beats}</beats><beat-type>${meter.type}</beat-type></time>` +
           `<clef><sign>G</sign><line>2</line><clef-octave-change>-1</clef-octave-change></clef><staff-details><staff-lines>6</staff-lines>` +
           [['E', 2], ['A', 2], ['D', 3], ['G', 3], ['B', 3], ['E', 4]].map((t, i) => `<staff-tuning line="${i + 1}"><tuning-step>${t[0]}</tuning-step><tuning-octave>${t[1]}</tuning-octave></staff-tuning>`).join('') +
           `</staff-details><transpose><diatonic>0</diatonic><chromatic>0</chromatic><octave-change>-1</octave-change></transpose></attributes>`;
-        out += `<direction placement="above"><direction-type><metronome><beat-unit>quarter</beat-unit><per-minute>${doc.bpm}</per-minute></metronome></direction-type><sound tempo="${doc.bpm}"/></direction>`;
+        out += `<direction placement="above"><direction-type><metronome><beat-unit>${meter.compound ? 'quarter' : meter.type === 8 ? 'eighth' : 'quarter'}</beat-unit>${meter.compound ? '<beat-unit-dot/>' : ''}<per-minute>${doc.bpm}</per-minute></metronome></direction-type><sound tempo="${Math.round(doc.bpm * meter.beat / DIV)}"/></direction>`;
         first = false;
       } else if (fifths != null && fifths !== curFifths) {
         curFifths = fifths;
@@ -41,25 +52,30 @@ function toMusicXML(doc, comp) {
       }
       if (mi === 0) out += `<direction placement="above"><direction-type><words font-weight="bold">${xmlEsc(blockTitle(B.block))}</words></direction-type></direction>`;
       if (M.first && M.seg.label) out += `<direction placement="above"><direction-type><words font-style="italic">${xmlEsc(M.seg.label)}</words></direction-type></direction>`;
-      const beams = beamInfo(M.events);
+      const beams = beamInfo(M.events, meter.beat);
       M.events.forEach((e, i) => {
-        out += '<note>' + (e.kind === 'note' ? pitchXml(e) : '<rest/>') + `<duration>${e.dur}</duration><voice>1</voice><type>${e.type}</type>`;
-        if (e.tuplet) out += '<time-modification><actual-notes>3</actual-notes><normal-notes>2</normal-notes></time-modification>';
-        if (e.kind === 'note') out += '<stem>up</stem>';
-        if (beams[i]) for (let l = 1; l <= (e.type === '16th' ? 2 : 1); l++) out += `<beam number="${l}">${beams[i]}</beam>`;
-        let nots = '', tech = '';
-        if (e.tuplet && e.slot >= 0) { if (e.slot % 3 === 0) nots += '<tuplet type="start" bracket="yes"/>'; if (e.slot % 3 === 2) nots += '<tuplet type="stop"/>'; }
-        if (e.kind === 'note') {
-          if (e.linkIn === 'H' || e.linkIn === 'P') { nots += '<slur type="stop"/>'; tech += e.linkIn === 'H' ? '<hammer-on type="stop"/>' : '<pull-off type="stop"/>'; }
-          if (e.linkIn === 'S') nots += '<slide type="stop"/>';
-          if (e.link === 'H' || e.link === 'P') { nots += '<slur type="start"/>'; tech += e.link === 'H' ? '<hammer-on type="start">H</hammer-on>' : '<pull-off type="start">P</pull-off>'; }
-          if (e.link === 'S') nots += '<slide type="start" line-type="solid"/>';
-          if (e.tech && e.tech.bend) tech += `<bend><bend-alter>${e.tech.bend}</bend-alter>${e.tech.release ? '<release/>' : ''}</bend>`;
-          tech += `<string>${6 - e.s}</string><fret>${e.f}</fret>`;
-          nots += `<technical>${tech}</technical>`;
-        }
-        if (nots) out += `<notations>${nots}</notations>`;
-        out += '</note>';
+        const tones = e.kind === 'note' ? [e].concat(e.extra || []) : [null];
+        tones.forEach((t, ti) => {
+          out += '<note>' + (ti > 0 ? '<chord/>' : '') + (t ? pitchXml(t) : '<rest/>') + `<duration>${e.dur}</duration><voice>1</voice><type>${e.type}</type>`;
+          if (e.tuplet) out += `<time-modification><actual-notes>3</actual-notes><normal-notes>2</normal-notes></time-modification>`;
+          if (t && e.type !== 'whole') out += '<stem>up</stem>';
+          if (ti === 0) Object.keys(beams[i]).forEach(lv => { out += `<beam number="${lv}">${beams[i][lv]}</beam>`; });
+          let nots = '', tech = '';
+          if (ti === 0 && e.tuplet) { if (e.tupStart) nots += '<tuplet type="start" bracket="yes"/>'; if (e.tupStop) nots += '<tuplet type="stop"/>'; }
+          if (t) {
+            if (ti === 0) {
+              if (e.linkIn === 'H' || e.linkIn === 'P') { nots += '<slur type="stop"/>'; tech += e.linkIn === 'H' ? '<hammer-on type="stop"/>' : '<pull-off type="stop"/>'; }
+              if (e.linkIn === 'S') nots += '<slide type="stop"/>';
+              if (e.link === 'H' || e.link === 'P') { nots += '<slur type="start"/>'; tech += e.link === 'H' ? '<hammer-on type="start">H</hammer-on>' : '<pull-off type="start">P</pull-off>'; }
+              if (e.link === 'S') nots += '<slide type="start" line-type="solid"/>';
+              if (e.tech && e.tech.bend) tech += `<bend><bend-alter>${e.tech.bend}</bend-alter>${e.tech.release ? '<release/>' : ''}</bend>`;
+            }
+            tech += `<string>${6 - t.s}</string><fret>${t.f}</fret>`;
+            nots += `<technical>${tech}</technical>`;
+          }
+          if (nots) out += `<notations>${nots}</notations>`;
+          out += '</note>';
+        });
       });
       const lastOfBlock = mi === B.measures.length - 1;
       const lastOfDoc = lastOfBlock && B === comp[comp.length - 1];
@@ -67,7 +83,7 @@ function toMusicXML(doc, comp) {
       out += '</measure>';
     });
   });
-  if (!out) out = `<measure number="1"><attributes><divisions>${DIV}</divisions><time><beats>4</beats><beat-type>4</beat-type></time></attributes><note><rest measure="yes"/><duration>${MEASURE}</duration></note></measure>`;
+  if (!out) out = `<measure number="1"><attributes><divisions>${DIV}</divisions><time><beats>${meter.beats}</beats><beat-type>${meter.type}</beat-type></time></attributes><note><rest measure="yes"/><duration>${meter.len}</duration></note></measure>`;
   return `<?xml version="1.0" encoding="UTF-8" standalone="no"?>
 <!DOCTYPE score-partwise PUBLIC "-//Recordare//DTD MusicXML 4.0 Partwise//EN" "http://www.musicxml.org/dtds/partwise.dtd">
 <score-partwise version="4.0"><work><work-title>${xmlEsc(doc.name)}</work-title></work><identification><encoding><software>Tabwerk</software></encoding></identification>` +

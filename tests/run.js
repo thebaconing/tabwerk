@@ -18,18 +18,19 @@ ok(prog('C', 'major', [6], false) === 'H°', 'C-Dur vii°: ' + prog('C', 'major'
 ok(prog('C', 'major', [6], true) === 'Hm7♭5', 'C-Dur vii7: ' + prog('C', 'major', [6], true));
 
 // --- Hilfsprüfungen für erzeugte Bausteine ---
-function checkBlock(b, tag) {
-  const comp = T.computeDoc({ name: 't', bpm: 80, blocks: [b] });
+function checkBlock(b, tag, time = '4/4') {
+  const comp = T.computeDoc({ name: 't', bpm: 80, time, blocks: [b] });
+  const len = T.meterOf(time).len;
   const B = comp[0];
   ok(!B.err, tag + ' Fehler: ' + B.err);
-  B.measures.forEach((M, i) => ok(M.events.reduce((a, e) => a + e.dur, 0) === T.MEASURE, `${tag} Takt ${i + 1} nicht 4/4`));
+  B.measures.forEach((M, i) => ok(M.events.reduce((a, e) => a + e.dur, 0) === len, `${tag} Takt ${i + 1} nicht ${time}`));
   const notes = B.measures.flatMap(m => m.events).filter(e => e.kind === 'note');
-  notes.forEach(e => {
+  notes.flatMap(e => [e].concat(e.extra || [])).forEach(e => {
     ok(T.OPEN[e.s] + e.f === e.m, `${tag} Bund/Ton passt nicht`);
     ok(e.f >= 0 && e.f <= T.MAX_FRET, `${tag} Bund außerhalb: ${e.f}`);
     ok(T.mod12(T.NAT_PC[e.sp.letter] + e.sp.alter) === T.mod12(e.m), `${tag} Schreibweise passt nicht zum Ton`);
   });
-  const xml = T.toMusicXML({ name: 't', bpm: 80 }, comp);
+  const xml = T.toMusicXML({ name: 't', bpm: 80, time }, comp);
   const LET = { C: 0, D: 2, E: 4, F: 5, G: 7, A: 9, B: 11 };
   [...xml.matchAll(/<pitch><step>(\w)<\/step>(?:<alter>(-?\d)<\/alter>)?<octave>(-?\d)<\/octave><\/pitch>.*?<string>(\d)<\/string><fret>(\d+)<\/fret>/g)].forEach(p => {
     const w = (+p[3] + 1) * 12 + LET[p[1]] + (+p[2] || 0);
@@ -128,14 +129,14 @@ for (const mode of ['major', 'minor']) for (const [root] of T.ROOTS[mode]) for (
   ok(evs[1].link === 'H' && evs[2].linkIn === 'H', 'Hammer-on erkannt');
   // Umwandeln behält alle Töne
   const f = T.toFree(b);
-  ok(f.notes.filter(n => !n.rest).length === 6 && f.notes.filter(n => n.rest).length === 2, 'Umwandeln in freie Tonfolge');
+  ok(f.notes.filter(n => !n.rest).length === 6, 'Umwandeln in freie Tonfolge: Töne');
 }
 // Umwandeln eines erzeugten Bausteins: gleiche Töne
 {
   const b = Object.assign(T.newBlock('exercise', { type: 'penta', mode: 'minor', root: 'E' }), { fret: 0, section: 'fours', series: { kind: 'keys', items: ['A'] } });
   const a = T.generateBlock(b).segs.flatMap(s => s.notes).map(n => n.m);
   const f = T.toFree(b);
-  const c = T.generateBlock(f).segs.flatMap(s => s.notes).map(n => n.m);
+  const c = T.generateBlock(f).segs.flatMap(s => s.notes).filter(n => n.kind === 'note').map(n => n.m);
   ok(a.join() === c.join(), 'Umwandeln verändert Töne');
 }
 // Import prüft Daten
@@ -149,6 +150,70 @@ for (const mode of ['major', 'minor']) for (const [root] of T.ROOTS[mode]) for (
 {
   const d = T.exampleDoc(), comp = T.computeDoc(d);
   comp.forEach(B => { ok(!B.err && !B.warn.length, 'Beispiel: ' + T.blockTitle(B.block)); });
+}
+
+// --- Akkordgriffe ---
+const grip = (r, q, f) => { const p = T.chordVoicing(r, q, f), m = {}; p.forEach(x => m[x.s] = x.f); return [0, 1, 2, 3, 4, 5].map(s => m[s] == null ? 'x' : m[s]).join(''); };
+[['C', 'maj', 0, 'x32010'], ['A', 'min', 0, 'x02210'], ['G', 'maj', 0, '320003'], ['E', 'maj', 0, '022100'], ['D', 'maj', 0, 'xx0232'], ['E', '7', 0, '020100'], ['F', 'maj', 1, '133211'], ['A', 'maj', 5, '577655']].forEach(([r, q, f, exp]) => ok(grip(r, q, f) === exp, `Griff ${r}${q} Bund ${f}: ${grip(r, q, f)} statt ${exp}`));
+for (const r of T.CHORD_ROOTS) for (const q of Object.keys(T.CHORDS)) for (let f = 0; f <= 12; f++) {
+  const p = T.chordVoicing(r, q, f), set = T.buildChord(r, q);
+  p.forEach(x => ok(T.degreeOf(set, T.OPEN[x.s] + x.f) >= 0, `Griff ${r}${q} f${f}: falscher Ton`));
+  ok(new Set(p.map(x => x.s)).size === p.length, `Griff ${r}${q}: Saite doppelt`);
+  if (p.length) ok(T.degreeOf(set, T.OPEN[p[0].s] + p[0].f) === 0, `Griff ${r}${q} f${f}: Bass ist nicht der Grundton`);
+}
+
+// --- Taktarten: alle Bausteinarten in allen Taktarten ---
+for (const time of T.TIMES) {
+  const m = T.meterOf(time);
+  const blocks = [
+    Object.assign(T.newBlock('exercise', { type: 'penta', mode: 'minor', root: 'A' }), { fret: 5, section: 'triads' }),
+    Object.assign(T.newBlock('scale', { type: 'scale', mode: 'major', root: 'G' }), { dir: 'updown', unit: 'tri8' }),
+    Object.assign(T.newBlock('chord'), { root: 'D', quality: 'maj7', fret: 5, length: 2, unit: 's16' }),
+    Object.assign(T.newBlock('prog', { root: 'C', mode: 'major' }), { length: 1, unit: 'e' })
+  ];
+  blocks.forEach(b => checkBlock(b, `${time} ${b.kind}`, time));
+  const ch = blocks[2], { B } = checkBlock(ch, `${time} chord len`, time);
+  ok(B.measures.length === 2, `${time}: Arpeggio 2 Takte ergibt ${B.measures.length}`);
+  // freie Tonfolge mit gemischten Längen und Akkorden
+  const fr = T.newBlock('free', { type: 'scale', mode: 'major', root: 'C' });
+  fr.notes = [{ pos: T.chordVoicing('C', 'maj', 0), dur: 'h' }, { pos: [{ s: 4, f: 1 }], dur: 'q' }, { pos: [{ s: 4, f: 3 }], dur: 'tri8' }, { pos: [{ s: 5, f: 0 }], dur: 'tri8' }, { pos: [{ s: 5, f: 1 }], dur: 'tri8' }, { rest: true, dur: 'e' }, { pos: [{ s: 3, f: 0 }], dur: 's16' }, { pos: [{ s: 3, f: 2 }], dur: 's16' }, { pos: [{ s: 2, f: 3 }], dur: 'w' }, { pos: [{ s: 1, f: 3 }], dur: 'tri16' }];
+  const r = checkBlock(fr, `${time} frei`, time);
+  const played = r.notes.map(e => [e].concat(e.extra || []).map(t => t.m).join('+'));
+  const want = fr.notes.filter(n => !n.rest).map(n => T.notePos(n).slice().sort((a, c) => a.s - c.s).map(p => T.OPEN[p.s] + p.f).join('+'));
+  ok(played.join() === want.join(), `${time} frei: Töne in falscher Reihenfolge`);
+  // Umwandeln und Zusammenführen behalten Rhythmus und Töne
+  for (const b of blocks.concat([fr])) {
+    const before = T.computeDoc({ time, blocks: [b] })[0].measures.flatMap(x => x.events);
+    const after = T.computeDoc({ time, blocks: [T.toFree(b, m)] })[0].measures.flatMap(x => x.events);
+    const sig = evs => evs.map(e => (e.kind === 'note' ? [e].concat(e.extra || []).map(t => t.m).join('+') : 'r') + ':' + e.dur).join(' ');
+    ok(sig(before) === sig(after), `${time} ${b.kind}: Umwandeln verändert Rhythmus`);
+  }
+  const merged = T.mergeBlocks(blocks, m);
+  const mB = checkBlock(merged, `${time} zusammengeführt`, time);
+  const sepNotes = T.computeDoc({ time, blocks }).flatMap(B2 => B2.measures.flatMap(x => x.events)).filter(e => e.kind === 'note').map(e => e.m);
+  ok(mB.notes.map(e => e.m).join() === sepNotes.join(), `${time}: Zusammenführen verändert Töne`);
+  const sepBars = T.computeDoc({ time, blocks }).reduce((a, B2) => a + B2.measures.length, 0);
+  ok(mB.B.measures.length === sepBars, `${time}: Zusammenführen ändert Taktzahl (${mB.B.measures.length} statt ${sepBars})`);
+  // Kopieren eines Bereichs (evToNote) und Einfügen ergibt dieselben Töne und Längen
+  const evs = T.computeDoc({ time, blocks: [blocks[0]] })[0].measures.flatMap(x => x.events).slice(2, 11);
+  const pasted = T.newBlock('free'); pasted.notes = evs.map(T.evToNote);
+  const pe = T.computeDoc({ time, blocks: [pasted] })[0].measures.flatMap(x => x.events).filter(e => e.kind === 'note');
+  ok(pe.map(e => e.m + ':' + e.dur).join() === evs.filter(e => e.kind === 'note').map(e => e.m + ':' + e.dur).join(), `${time}: Kopieren/Einfügen verändert Töne`);
+}
+// Ton, der nicht mehr in den Takt passt, rückt weiter
+{
+  const fr = T.newBlock('free'); fr.notes = [{ pos: [{ s: 0, f: 3 }], dur: 'h' }, { pos: [{ s: 0, f: 5 }], dur: 'q' }, { pos: [{ s: 1, f: 2 }], dur: 'h' }];
+  const B = T.computeDoc({ time: '4/4', blocks: [fr] })[0];
+  ok(B.measures.length === 2 && B.warn.length === 1 && B.measures[1].events[0].m === T.OPEN[1] + 2, 'Ton rückt in den nächsten Takt');
+  const B3 = T.computeDoc({ time: '3/4', blocks: [Object.assign(T.newBlock('free'), { notes: [{ pos: [{ s: 0, f: 3 }], dur: 'w' }] })] })[0];
+  ok(B3.measures[0].events[0].dur === 24 && B3.warn.length === 1, 'Ganze im 3/4 wird gekürzt');
+}
+// Import alter und neuer Formate
+{
+  const d = T.sanitizeDoc({ name: 'x', time: '7/7', blocks: [{ kind: 'free', notes: [{ s: 1, f: 3, dur: 'q' }, { pos: [{ s: 0, f: 3 }, { s: 0, f: 5 }, { s: 2, f: 30 }], dur: 'zz' }, { rest: true, dur: 'h' }] }] });
+  ok(d.time === '4/4', 'Import: ungültige Taktart');
+  const n = d.blocks[0].notes;
+  ok(n.length === 3 && n[0].pos[0].f === 3 && n[1].pos.length === 1 && !n[1].dur && n[2].dur === 'h', 'Import: Töne bereinigt ' + JSON.stringify(n));
 }
 
 console.log(`Prüfungen: ${checks}, Fehler: ${errs.length}`);

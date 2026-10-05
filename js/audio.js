@@ -16,11 +16,15 @@ const Player = (() => {
     bufCache.set(m, b); return b;
   }
   function pluck(ev, t, dur) {
-    const src = ac.createBufferSource(); src.buffer = ks(ev.m);
+    const tones = [ev].concat(ev.extra || []);
+    tones.forEach((tn, i) => pluckOne(ev, tn.m, t + i * 0.012, dur - i * 0.012, tones.length > 1 ? 0.55 / Math.sqrt(tones.length) * 1.3 : null));
+  }
+  function pluckOne(ev, m, t, dur, volIn) {
+    const src = ac.createBufferSource(); src.buffer = ks(m);
     const g = ac.createGain();
-    const vol = ev.linkIn ? 0.28 : 0.55; // gebundene Töne leiser, ohne neuen Anschlag
+    const vol = volIn != null ? volIn : ev.linkIn ? 0.28 : 0.55; // gebundene Töne leiser, ohne neuen Anschlag
     g.gain.setValueAtTime(vol, t);
-    const tech = ev.tech || {};
+    const tech = volIn != null ? {} : (ev.tech || {});
     let hold = dur;
     if (tech.bend) {
       const c = tech.bend * 100;
@@ -28,7 +32,7 @@ const Player = (() => {
       src.detune.linearRampToValueAtTime(c, t + dur * 0.35);
       if (tech.release) { src.detune.setValueAtTime(c, t + dur * 0.6); src.detune.linearRampToValueAtTime(0, t + dur * 0.95); }
     }
-    if (ev.link === 'S' && ev.next) {
+    if (volIn == null && ev.link === 'S' && ev.next) {
       const c = (ev.next.m - ev.m) * 100;
       src.detune.setValueAtTime(0, t + dur * 0.55);
       src.detune.linearRampToValueAtTime(c, t + dur);
@@ -44,25 +48,26 @@ const Player = (() => {
   }
   // comp-Blöcke → Ereignisliste in Divisions
   function buildQueue(comp, onlyBlock) {
-    const q = []; let pos = 0;
-    for (let b = 0; b < 4; b++) q.push({ at: b * DIV, click: true, strong: b === 0, count: true });
-    pos = MEASURE;
+    const q = [];
+    const meter = comp.length ? comp[0].meter : meterOf('4/4');
+    for (let b = 0; b < meter.clicks; b++) q.push({ at: b * meter.beat, click: true, strong: b === 0, count: true });
+    let pos = meter.len;
     comp.forEach(B => {
       if (onlyBlock != null && B.bi !== onlyBlock) return;
       const evs = B.measures.flatMap(m => m.events);
       evs.forEach((e, i) => { if (e.link === 'S') e.next = evs[i + 1]; });
       B.measures.forEach(M => {
-        for (let b = 0; b < 4; b++) q.push({ at: pos + b * DIV, click: true, strong: b === 0 });
+        for (let b = 0; b < meter.clicks; b++) q.push({ at: pos + b * meter.beat, click: true, strong: b === 0 });
         let p = pos;
         M.events.forEach(e => { if (e.kind === 'note') q.push({ at: p, ev: e, dur: e.dur }); p += e.dur; });
-        pos += MEASURE;
+        pos += meter.len;
       });
     });
     q.sort((a, b) => a.at - b.at || (a.click ? -1 : 1));
-    return { q, total: pos };
+    return { q, total: pos, meter };
   }
   function schedule() {
-    const spd = 60 / opts.bpm() / DIV;
+    const spd = 60 / opts.bpm() / queue.meter.beat;
     if (endAt == null && nextT < ac.currentTime) nextT = ac.currentTime + 0.05;
     while (nextT < ac.currentTime + 0.25) {
       if (qi >= queue.q.length) {
@@ -95,7 +100,7 @@ const Player = (() => {
     if (ac.state !== 'running') throw new Error('Der Browser hat die Tonausgabe blockiert. Bitte nochmal auf Abspielen tippen.');
     queue = buildQueue(comp, onlyBlock);
     if (queue.q.filter(e => !e.click).length === 0) throw new Error('Hier gibt es noch keine Töne zum Abspielen.');
-    queue.q.forEach(e => { if (e.ev) ks(e.ev.m); });
+    queue.q.forEach(e => { if (e.ev) [e.ev].concat(e.ev.extra || []).forEach(t => ks(t.m)); });
     master = ac.createGain(); master.connect(ac.destination);
     qi = 0; curAt = 0; endAt = null; shown = []; nextT = ac.currentTime + 0.12;
     timer = setInterval(schedule, 25); schedule(); requestAnimationFrame(frame);

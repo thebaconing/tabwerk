@@ -10,7 +10,7 @@ Editor für Gitarrenübungen im Browser. Bausteine aneinanderreihen, als Tabulat
 | Skala | ganze Lage oder Ausschnitt, Start- und Endton im Griffbild anklicken, Richtung auf, ab, auf + ab, ab + auf |
 | Akkord | Arpeggio eines frei gewählten Akkords (Dur, Moll, 7, maj7, m7, m7♭5, °7, sus, 6, 9 …) |
 | Akkordfolge | Arpeggien nach Stufen (I-IV-V, ii-V-I, 12-Takt-Blues …), leitereigen oder mit eigener Akkordart |
-| Freie Tonfolge | Töne per Klick aufs Griffbrett, mit Pausen, Bending (½, 1, Release), Hammer-on/Pull-off und Slide |
+| Freie Tonfolge | eigene Tonfolgen und Lieder: Töne und Akkorde per Klick aufs Griffbrett, eigene Länge pro Ton (Ganze bis 16tel, Triolen), Pausen, Bending (½, 1, Release), Hammer-on/Pull-off, Slide |
 
 Leitern: Tonleiter (Dur, natürliches Moll), Pentatonik, Blues. Fingersätze: Lage oder 3 pro Saite bzw. Boxen.
 
@@ -18,13 +18,22 @@ Jeder Baustein hat einen eigenen Notenwert (Viertel, Achtel, Achteltriolen, Sech
 
 **Reihe:** Jeder Baustein lässt sich danach in weiteren Tonarten (auch Quintenzirkel, Quartenzirkel, chromatisch), Lagen oder Oktaven wiederholen.
 
-**Einzelne Töne ändern:** Ton in der Tabulatur anklicken und den Baustein in eine freie Tonfolge umwandeln. Danach ist jeder Ton editierbar.
+**Eigene Folgen und Lieder zusammenstellen:**
+
+- In der Tabulatur einen Ton anklicken, mit Umschalt-Klick einen Bereich markieren, auch über mehrere Bausteine. Kopieren, dann in eine freie Tonfolge einfügen (ohne Auswahl entsteht eine neue). Rhythmus und Pausen bleiben dabei erhalten.
+- In freien Tonfolgen: ausschneiden, einfügen, löschen, Länge für die markierten Töne ändern.
+- Mehrere Bausteine mit Strg-Klick oder Umschalt-Klick markieren und zu einer Tonfolge zusammenführen.
+- Akkorde: „Akkord stapeln“ legt Töne übereinander, „Akkordgriff einfügen“ setzt einen fertigen Griff (Grundton, Akkordart, Lage).
+- Einen erzeugten Baustein in eine freie Tonfolge umwandeln, um jeden Ton direkt zu ändern.
+
+**Taktart** pro Folge: 4/4, 3/4, 2/4, 5/4, 6/8, 12/8. Ein Ton, der nicht mehr in den Takt passt, beginnt im nächsten Takt (Haltebögen gibt es noch nicht).
 
 ## Bedienung
 
 - Bausteine per Ziehen, mit ↑ ↓ oder Alt + Pfeiltaste umsortieren
 - Strg+Z / Strg+Y: Rückgängig / Wiederholen
-- In freien Tonfolgen: Pfeiltasten wählen, Entf löscht, P setzt eine Pause
+- In freien Tonfolgen: Pfeiltasten wählen (Umschalt erweitert), Entf löscht, P setzt eine Pause
+- Strg+C / Strg+X / Strg+V: kopieren, ausschneiden, einfügen
 - Bibliothek: mehrere Übungsfolgen, im Browser gespeichert
 - Datei: MusicXML für Guitar Pro, Folge oder ganze Bibliothek als .json, Import
 
@@ -52,7 +61,7 @@ Erzeugt `dist/tabwerk.html` mit allem eingebettet und `dist/artifact.html` für 
 npm test
 ```
 
-Prüft alle Leitern, Tonarten, Lagen und Muster, alle Akkordtypen in mehreren Lagen, alle Vorlagen für Akkordfolgen, Reihen (Tonarten, Lagen, Oktaven), Techniken, das Umwandeln in freie Tonfolgen, den Import und bei jedem Baustein: 4/4-Takte, Bund passt zum Ton, Schreibweise passt zum Ton, MusicXML-Tonhöhe passt zu Saite und Bund.
+Prüft Akkordgriffe, alle Taktarten, gemischte Notenlängen, Kopieren/Einfügen, Zusammenführen, alle Leitern, Tonarten, Lagen und Muster, alle Akkordtypen in mehreren Lagen, alle Vorlagen für Akkordfolgen, Reihen (Tonarten, Lagen, Oktaven), Techniken, das Umwandeln in freie Tonfolgen, den Import und bei jedem Baustein: 4/4-Takte, Bund passt zum Ton, Schreibweise passt zum Ton, MusicXML-Tonhöhe passt zu Saite und Bund.
 
 ## Aufbau
 
