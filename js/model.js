@@ -52,6 +52,38 @@ function powerVoicing(root, q, f) {
   if (v[1]) v[1] = { s: v[1].s, f: v[1].f + fifth - 7 };
   return v.filter(p => p.f >= 0);
 }
+// Alle sinnvollen Griffe eines Akkords auf dem Griffbrett, tiefe Lagen zuerst
+function voicingKey(pos) { return pos.map(p => p.s + ':' + p.f).sort().join(' '); }
+function chordVoicingsAll(root, q, power) {
+  const out = [], seen = new Set();
+  const add = v => { const k = voicingKey(v); if (v.length > 1 && !seen.has(k)) { seen.add(k); out.push(v); } };
+  if (power) {
+    const iv = CHORDS[q] ? CHORDS[q].iv : [0, 7];
+    const fifth = iv.includes(7) ? 7 : iv.includes(6) ? 6 : iv.includes(8) ? 8 : 7, rp = pcOf(root);
+    for (let s = 0; s <= 3; s++) for (let f = 0; f <= 15; f++) {
+      if (mod12(OPEN[s] + f) !== rp) continue;
+      const v = [{ s, f }];
+      [[1, fifth], [2, 12]].forEach(([d, i]) => { const fr = f + i - (OPEN[s + d] - OPEN[s]); if (fr >= 0 && fr <= MAX_FRET) v.push({ s: s + d, f: fr }); });
+      const fr = v.map(p => p.f).filter(x => x > 0);
+      if (v.length === 3 && (!fr.length || Math.max(...fr) - Math.min(...fr) <= 3)) add(v);
+    }
+  } else {
+    const want = new Set(buildChord(root, q).map(t => t.pc));
+    for (let f = 0; f <= 15; f++) {
+      const v = chordVoicing(root, q, f), fr = v.map(p => p.f).filter(x => x > 0);
+      const have = new Set(v.map(p => mod12(OPEN[p.s] + p.f)));
+      if (![...want].every(pc => have.has(pc))) continue;
+      // spielbar: Spanne höchstens 3 Bünde, nichts weit unter dem Basston, keine Streckung in beide Richtungen
+      const bf = v[0].f, span = fr.length ? Math.max(...fr) - Math.min(...fr) : 0;
+      if (span > 3 || fr.some(x => x < bf - 2 || x > bf + 3)) continue;
+      if (fr.some(x => x < bf) && span > 2) continue;
+      if (span + new Set(fr).size > 6) continue;
+      add(v);
+    }
+  }
+  const lowFret = v => { const fr = v.map(p => p.f).filter(x => x > 0); return fr.length ? Math.min(...fr) : 0; };
+  return out.sort((a, c) => lowFret(a) - lowFret(c) || a[0].s - c[0].s);
+}
 function powerName(root, q) { const iv = CHORDS[q] ? CHORDS[q].iv : [0, 7]; return deName(root) + (iv.includes(7) || !iv.includes(6) ? '5' : '5♭'); }
 // Notenlängen, die zusammen genau einen Takt füllen (größte zuerst)
 function barPieces(len) {

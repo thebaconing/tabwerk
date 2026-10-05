@@ -450,6 +450,20 @@ function freeRange() {
   const c = sel.fi2 != null ? sel.fi2 : sel.fi;
   return [Math.min(sel.fi, c), Math.max(sel.fi, c)];
 }
+// Griffe eines ausgewählten Akkords: gemerkter Akkord, sonst aus den Tönen erkannt
+function chordInfoOf(n) {
+  if (!n || n.rest || notePos(n).length < 2) return null;
+  if (n.chord) return { root: n.chord.root, quality: n.chord.quality, power: !!n.chord.power };
+  const c = identifyChord(notePos(n).map(p => OPEN[p.s] + p.f));
+  if (!c) return null;
+  return c.quality ? { root: c.root, quality: c.quality, power: false } : { root: c.root, quality: 'maj', power: true };
+}
+function gripList(n) { const c = chordInfoOf(n); return c ? chordVoicingsAll(c.root, c.quality, c.power) : []; }
+function gripCtl(n, pos) {
+  const list = gripList(n); if (list.length < 2) return '';
+  const i = list.findIndex(v => voicingKey(v) === voicingKey(pos)), bass = pos.slice().sort((x, y) => x.s - y.s)[0];
+  return `<span class="gripctl"><button class="btn sm" data-do="gripPrev" aria-label="Vorheriger Griff">◀</button><span class="small">Griff ${i >= 0 ? i + 1 : '–'} von ${list.length} · Grundton ${STR_NAMES[bass.s]}-Saite Bund ${bass.f}</span><button class="btn sm" data-do="gripNext" aria-label="Nächster Griff">▶</button></span>`;
+}
 function inspFree(b, B) {
   const ref = b.ref;
   const set = ref ? buildScale(ref.root, ref.mode, ref.type) : keyScale(doc.key);
@@ -490,6 +504,7 @@ function inspFree(b, B) {
     <button class="btn sm" data-do="next" aria-label="Nächster Eintrag"${!b.notes.length ? ' disabled' : ''}>▶</button>
     <button class="btn sm" data-do="desel"${!r ? ' disabled' : ''}>Auswahl aufheben</button>
     ${n && n.chord && pos.length > 1 ? `<button class="btn sm" data-do="chordToggle" title="${n.chord.power ? 'Powerchord durch den ganzen Akkord ersetzen' : 'Akkord auf Grundton, Quinte und Oktave reduzieren'}">${cnt > 1 ? (n.chord.power ? 'Markierte zu vollen Akkorden' : 'Markierte zu Powerchords') : n.chord.power ? 'Zum vollen Akkord ' + h(chordName(n.chord.root, n.chord.quality)) : 'Zum Powerchord ' + h(powerName(n.chord.root, n.chord.quality))}</button>` : ''}
+    ${gripCtl(n, pos)}
     <button class="btn sm" data-do="arp"${pos.length > 1 ? '' : ' disabled'} title="Akkord in Einzeltöne von tief nach hoch zerlegen, jeder mit der eingestellten Länge">Als Arpeggio auflösen</button>
     <span class="sep"></span>
     <button class="btn sm" data-tech="bend1" aria-pressed="${tech.bend === 1}"${single ? '' : ' disabled'}>Bending ½</button>
@@ -610,6 +625,17 @@ ins.addEventListener('click', e => {
   else if (a === 'prev') freeMove(-1);
   else if (a === 'next') freeMove(1);
   else if (a === 'desel') { clearSel(); renderInspector(); markSheetSel(); }
+  else if (a === 'gripPrev' || a === 'gripNext') {
+    const b = cur(); if (!b || b.kind !== 'free' || sel.fi == null) return;
+    const fi = sel.fi, n = b.notes[fi], list = gripList(n); if (list.length < 2) return;
+    const i = list.findIndex(v => voicingKey(v) === voicingKey(notePos(n)));
+    const j = i < 0 ? 0 : (i + (a === 'gripNext' ? 1 : -1) + list.length) % list.length;
+    const pos = clone(list[j]);
+    sel.fi2 = null; sel.k2 = null;
+    commit(d => { d.blocks[sel.bi].notes[fi].pos = pos; });
+    pos.forEach((p, k) => setTimeout(() => Player.preview(OPEN[p.s] + p.f), k * 25));
+    status(`Griff ${j + 1} von ${list.length}: ${pos.map(p => STR_NAMES[p.s] + p.f).join(' ')}.`);
+  }
   else if (a === 'chordToggle') {
     const b = cur(); if (!b || b.kind !== 'free' || sel.fi == null) return;
     const r = freeRange(), n0 = b.notes[sel.fi]; if (!n0.chord) return;

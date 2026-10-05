@@ -24,6 +24,7 @@ Jeder Baustein hat einen eigenen Notenwert (Viertel, Achtel, Achteltriolen, Sech
 - In freien Tonfolgen: ausschneiden, einfügen, löschen, Länge für die markierten Töne ändern.
 - Mehrere Bausteine mit Strg-Klick oder Umschalt-Klick markieren und zu einer Tonfolge zusammenführen.
 - Akkorde: „Akkord stapeln“ legt Töne übereinander, „Akkordgriff einfügen“ setzt einen fertigen Griff (Grundton, Akkordart, Lage), auch Powerchords (Grundton, Quinte, Oktave).
+- Griff durchschalten: Akkord in einer freien Tonfolge auswählen, mit ◀ ▶ durch die spielbaren Griffe auf dem Griffbrett blättern (bei Powerchords Grundton auf E-, A-, D- oder G-Saite).
 - Einen erzeugten Baustein in eine freie Tonfolge umwandeln, um jeden Ton direkt zu ändern.
 
 **Tonart des Stücks:** oben wählen (alle Dur- und Molltonarten). Dann gilt:
