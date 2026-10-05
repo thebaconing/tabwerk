@@ -29,6 +29,7 @@ Jeder Baustein hat einen eigenen Notenwert (Viertel, Achtel, Achteltriolen, Sech
 **Tonart des Stücks:** oben wählen (alle Dur- und Molltonarten). Dann gilt:
 
 - Vorschläge passend zur Tonart (Akkorde zuerst als Powerchord, wahlweise als voller Akkord oder Arpeggio; Powerchords merken sich den Akkord und lassen sich später mit „Zum vollen Akkord“ erweitern, angeschlagene Akkorde mit „Als Arpeggio auflösen“ zerlegen): Skalen und Übungen (Tonart, Paralleltonart, Pentatonik, Blues), leitereigene Akkorde mit Stufe, Akkordfolgen, und der nächste Akkord nach dem vorherigen (übliche Fortsetzungen nach Funktionsharmonik zuerst).
+- Jeder Vorschlag hat einen Vorschau-Knopf ▶: spielt ihn so, wie er eingefügt würde, mit dem Takt davor, ohne etwas zu ändern.
 - Umschalter „Passende zuerst“ / „Nur passende“: wirkt auf Vorschläge und Auswahllisten. „Nur passende“ blendet Unpassendes aus, verwandte Bausteine (Blue Note, Zwischendominante, Dominante aus harmonisch Moll, Blues-Septakkorde) bleiben sichtbar und sind markiert.
 - Jeder Baustein bekommt eine Kennzeichnung: passt, verwandt oder passt nicht, mit Begründung.
 - Leiterfremde Töne sind in der Tabulatur rot unterstrichen, Blue Notes gestrichelt.

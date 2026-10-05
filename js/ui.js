@@ -134,23 +134,85 @@ function renderSugg() {
     ${segHTML('sugTab', tabs.map(([v, l]) => [v, l, v === 'next' && !prev]), prefs.sugTab)}
     ${['chord', 'prog', 'next'].includes(prefs.sugTab) ? segHTML('sugSeventh', [['false', 'Dreiklänge'], ['true', 'Vierklänge']], String(prefs.sugSeventh)) + segHTML('sugAs', [['power', 'Powerchord'], ['chord', 'voller Akkord'], ['arp', 'Arpeggio']], prefs.sugAs) : ''}
     ${nextNote}
-    <div class="sugg-list">${items.map(x => `<button type="button" class="btn sug lev-${x.level}" data-sug="${x.idx}"><b>${h(x.label)}</b><small>${h(x.sub)}</small>${fitPill({ level: x.level, text: x.sub })}</button>`).join('') || '<span class="hint small">Keine Vorschläge.</span>'}</div>`;
+    <div class="sugg-list">${items.map(x => `<div class="sug-row"><button type="button" class="btn sug lev-${x.level}" data-sug="${x.idx}" title="Einfügen"><b>${h(x.label)}</b><small>${h(x.sub)}</small>${fitPill({ level: x.level, text: x.sub })}</button><button type="button" class="btn prev-btn" data-prev="${x.idx}" aria-label="Vorschau ${h(x.label)}" title="Vorschau anhören, ohne einzufügen" aria-pressed="${ui.previewIdx === x.idx}">${ui.previewIdx === x.idx ? '■' : '▶'}</button></div>`).join('') || '<span class="hint small">Keine Vorschläge.</span>'}</div>
+    <p class="hint small">▶ spielt den Vorschlag so, wie er eingefügt würde, mit dem Takt davor. Klick auf den Namen fügt ihn ein.</p>`;
+}
+// Einfügen eines Vorschlags planen (ohne etwas zu ändern), damit Vorschau und Einfügen gleich sind
+function gripsFor(chords, power) {
+  let ref = lastToneBefore();
+  return chords.map(c => {
+    const f = chordFretNear(c.root, power ? '5' : c.quality, ref), pos = power ? powerVoicing(c.root, c.quality, f) : chordVoicing(c.root, c.quality, f);
+    if (pos.length) ref = { s: pos[0].s, f: pos[0].f };
+    return { c, pos, name: power ? powerName(c.root, c.quality) : chordName(c.root, c.quality) };
+  }).filter(g => g.pos.length > 1);
+}
+function planInsertion(sug) {
+  const nb = sug.make();
+  const at = sel.bi == null ? doc.blocks.length : sel.bi + 1;
+  if (prefs.sugAs !== 'arp' && (nb.kind === 'chord' || nb.kind === 'prog')) {
+    const chords = nb.kind === 'chord' ? [{ root: nb.root, quality: nb.quality }] : progChords(nb).map(c => ({ root: c.root, quality: c.quality }));
+    const power = prefs.sugAs === 'power', grips = gripsFor(chords, power);
+    if (!grips.length) return null;
+    const meta = g => ({ root: g.c.root, quality: g.c.quality, power });
+    const b = cur();
+    if (b && b.kind === 'free') {
+      const r = freeRange(), pos = r ? r[1] + 1 : b.notes.length, d0 = ui.dur || barPieces(meterOf(doc.time).len)[0];
+      return { mode: 'into', bi: sel.bi, pos, notes: grips.map(g => ({ pos: g.pos, dur: d0, chord: meta(g) })), grips, power };
+    }
+    const blk = newBlock('free', doc.key ? { type: 'scale', root: doc.key.root, mode: doc.key.mode } : undefined);
+    if (!doc.key) blk.ref = null;
+    const pieces = barPieces(meterOf(doc.time).len);
+    blk.notes = grips.flatMap(g => pieces.map(d => ({ pos: clone(g.pos), dur: d, chord: meta(g) })));
+    blk.title = chords.length === 1 ? `${grips[0].name}${power ? ' (für ' + chordName(chords[0].root, chords[0].quality) + ')' : ''}` : `${sug.label} (${power ? 'Powerchords' : 'Akkorde'})`;
+    return { mode: 'block', at, block: blk, grips, power };
+  }
+  return { mode: 'block', at, block: nb };
+}
+function applyPlan(d, plan) {
+  if (plan.mode === 'into') d.blocks[plan.bi].notes.splice(plan.pos, 0, ...clone(plan.notes));
+  else d.blocks.splice(plan.at, 0, clone(plan.block));
+}
+function insertSuggestion(sug) {
+  const plan = planInsertion(sug);
+  if (!plan) { status('Für diesen Akkord gibt es keinen Griff.'); return; }
+  if (plan.mode === 'into') { sel.fi = plan.pos + plan.notes.length - 1; sel.fi2 = plan.notes.length > 1 ? plan.pos : null; sel.k2 = null; }
+  commit(d => applyPlan(d, plan));
+  if (plan.mode === 'block') { sel = { bi: plan.at, fi: null, fi2: null, k: null, k2: null }; refresh(); }
+  if (plan.grips) {
+    plan.grips[0].pos.forEach((p, i) => setTimeout(() => Player.preview(OPEN[p.s] + p.f), i * 25));
+    status(`${plan.grips.map(g => g.name + ' (' + g.pos.map(p => STR_NAMES[p.s] + p.f).join(' ') + ')').join(', ')} eingefügt.` + (plan.power ? ' Später erweitern: Akkord anklicken, dann „Zum vollen Akkord“.' : ' Akkord auswählen und „Als Arpeggio auflösen“, um ihn in Einzeltöne zu zerlegen.'));
+  } else status(`${sug.label} hinzugefügt (${sug.sub}).`);
+}
+// Vorschau: so klingt es eingefügt, mit dem Takt davor als Übergang
+async function previewSuggestion(idx) {
+  if (ui.previewIdx === idx && Player.isPlaying()) { Player.stop(); return; }
+  const sug = ui.sugAll[idx]; if (!sug) return;
+  const plan = planInsertion(sug); if (!plan) { status('Für diesen Akkord gibt es keinen Griff.'); return; }
+  const tmp = clone(doc); applyPlan(tmp, plan);
+  const tc = computeDoc(tmp);
+  let nos = [];
+  if (plan.mode === 'block') nos = tc[plan.at].measures.map(m => m.no);
+  else tc[plan.bi].measures.forEach(m => { if (m.events.some(e => e.fi != null && e.fi >= plan.pos && e.fi < plan.pos + plan.notes.length)) nos.push(m.no); });
+  if (!nos.length) return;
+  const range = { from: Math.max(1, Math.min(...nos) - 1), to: Math.max(...nos) };
+  setPlayUi(false);
+  ui.previewIdx = idx; renderSugg();
+  try {
+    await Player.start(tc, null, {
+      bpm: () => doc.bpm, countIn: () => false, loop: () => false, metronome: () => false, range,
+      onNote: () => {}, onStop: () => { ui.previewIdx = null; renderSugg(); status(''); }
+    });
+    status(`Vorschau: ${plan.grips ? plan.grips.map(g => g.name).join(', ') + (plan.power ? ' als Powerchord' + (plan.grips.length > 1 ? 's' : '') : '') : sug.label}` + (range.from < Math.min(...nos) ? ', mit dem Takt davor.' : '.') + ' Noch nichts eingefügt.');
+  } catch (err) { ui.previewIdx = null; renderSugg(); status(err.message); }
 }
 $('sugg').addEventListener('click', e => {
   const sb = e.target.closest('.seg button');
   if (sb) { const k = sb.parentElement.dataset.seg; if (k === 'sugTab') prefs.sugTab = sb.dataset.v; if (k === 'sugSeventh') prefs.sugSeventh = sb.dataset.v === 'true'; if (k === 'sugAs') prefs.sugAs = sb.dataset.v; savePrefs(); renderSugg(); return; }
+  const pv = e.target.closest('[data-prev]'); if (pv) { previewSuggestion(+pv.dataset.prev); return; }
   const it = e.target.closest('[data-sug]'); if (!it) return;
   const sug = ui.sugAll[+it.dataset.sug]; if (!sug) return;
-  const nb = sug.make();
-  if (prefs.sugAs !== 'arp' && (nb.kind === 'chord' || nb.kind === 'prog')) {
-    const chords = nb.kind === 'chord' ? [{ root: nb.root, quality: nb.quality }] : progChords(nb).map(c => ({ root: c.root, quality: c.quality }));
-    insertStrummed(chords, sug.label, prefs.sugAs === 'power');
-    return;
-  }
-  const at = sel.bi == null ? doc.blocks.length : sel.bi + 1;
-  commit(d => d.blocks.splice(at, 0, nb));
-  sel = { bi: at, fi: null, fi2: null, k: null, k2: null }; refresh();
-  status(`${sug.label} hinzugefügt (${sug.sub}).`);
+  if (ui.previewIdx != null) Player.stop();
+  insertSuggestion(sug);
 });
 $('docKey').addEventListener('change', e => {
   const v = e.target.value;
@@ -159,33 +221,6 @@ $('docKey').addEventListener('change', e => {
 });
 $('keyFilter').addEventListener('click', e => { const b = e.target.closest('button'); if (!b) return; prefs.keyFilter = b.dataset.v; savePrefs(); refresh(); });
 
-// Akkorde angeschlagen einfügen: Griff jeweils nah am vorherigen Ton.
-// In einer ausgewählten freien Tonfolge mit der eingestellten Länge, sonst als neue Tonfolge mit einem Takt pro Akkord.
-function insertStrummed(chords, label, power) {
-  let ref = lastToneBefore();
-  const grips = chords.map(c => {
-    const f = chordFretNear(c.root, power ? '5' : c.quality, ref), pos = power ? powerVoicing(c.root, c.quality, f) : chordVoicing(c.root, c.quality, f);
-    if (pos.length) ref = { s: pos[0].s, f: pos[0].f };
-    return { c, pos, name: power ? powerName(c.root, c.quality) : chordName(c.root, c.quality) };
-  }).filter(g => g.pos.length > 1);
-  if (!grips.length) { status('Für diesen Akkord gibt es keinen Griff.'); return; }
-  const b = cur();
-  if (b && b.kind === 'free') {
-    const d0 = ui.dur || barPieces(meterOf(doc.time).len)[0];
-    freeInsertMany(grips.map(g => ({ pos: g.pos, dur: d0, chord: { root: g.c.root, quality: g.c.quality, power: !!power } })));
-  } else {
-    const nb = newBlock('free', doc.key ? { type: 'scale', root: doc.key.root, mode: doc.key.mode } : undefined);
-    if (!doc.key) nb.ref = null;
-    const pieces = barPieces(meterOf(doc.time).len);
-    nb.notes = grips.flatMap(g => pieces.map(d => ({ pos: clone(g.pos), dur: d, chord: { root: g.c.root, quality: g.c.quality, power: !!power } })));
-    nb.title = chords.length === 1 ? `${grips[0].name}${power ? ' (für ' + chordName(chords[0].root, chords[0].quality) + ')' : ''}` : `${label} (${power ? 'Powerchords' : 'Akkorde'})`;
-    const at = sel.bi == null ? doc.blocks.length : sel.bi + 1;
-    commit(d => d.blocks.splice(at, 0, nb));
-    sel = { bi: at, fi: null, fi2: null, k: null, k2: null }; refresh();
-  }
-  grips[0].pos.forEach((p, i) => setTimeout(() => Player.preview(OPEN[p.s] + p.f), i * 25));
-  status(`${grips.map(g => g.name + ' (' + g.pos.map(p => STR_NAMES[p.s] + p.f).join(' ') + ')').join(', ')} eingefügt.` + (power ? ' Später erweitern: Akkord anklicken, dann „Zum vollen Akkord“.' : ' Akkord auswählen und „Als Arpeggio auflösen“, um ihn in Einzeltöne zu zerlegen.'));
-}
 function clearSel() { sel.fi = null; sel.fi2 = null; sel.k = null; sel.k2 = null; }
 function evByK(k) { for (const B of comp) for (const M of B.measures) for (const e of M.events) if (e.k === k) return { B, e }; return null; }
 function noteLabel(e) { return `${STR_NAMES[e.s]}-Saite, Bund ${e.f} (${deNote(e.sp.letter, e.sp.alter)})`; }
@@ -878,6 +913,7 @@ function setPlayUi(on, only) {
   $('playBlock').textContent = on && only != null ? '■ Stopp' : '▶ Baustein';
 }
 async function play(only) {
+  if (ui.previewIdx != null) { Player.stop(); ui.previewIdx = null; renderSugg(); }
   if (Player.isPlaying() || starting) { Player.stop(); return; }
   if (only === undefined && sel.bi == null) return;
   starting = true; setPlayUi(true, only);

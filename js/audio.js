@@ -47,7 +47,7 @@ const Player = (() => {
     o.connect(g).connect(master); o.start(t); o.stop(t + 0.05);
   }
   // comp-Blöcke → Ereignisliste in Divisions
-  function buildQueue(comp, onlyBlock, countIn) {
+  function buildQueue(comp, onlyBlock, countIn, range) {
     const q = [];
     const meter = comp.length ? comp[0].meter : meterOf('4/4');
     let pos = 0;
@@ -57,6 +57,7 @@ const Player = (() => {
       const evs = B.measures.flatMap(m => m.events);
       evs.forEach((e, i) => { if (e.link === 'S') e.next = evs[i + 1]; });
       B.measures.forEach(M => {
+        if (range && (M.no < range.from || M.no > range.to)) return;
         for (let b = 0; b < meter.clicks; b++) q.push({ at: pos + b * meter.beat, click: true, strong: b === 0 });
         let p = pos;
         M.events.forEach(e => { if (e.kind === 'note') q.push({ at: p, ev: e, dur: e.dur }); p += e.dur; });
@@ -98,7 +99,7 @@ const Player = (() => {
     try { if (ac.state !== 'running') await ac.resume(); } catch (e) {}
     if (my !== runId) return false;
     if (ac.state !== 'running') throw new Error('Der Browser hat die Tonausgabe blockiert. Bitte nochmal auf Abspielen tippen.');
-    queue = buildQueue(comp, onlyBlock, o.countIn ? o.countIn() : true);
+    queue = buildQueue(comp, onlyBlock, o.countIn ? o.countIn() : true, o.range || null);
     if (queue.q.filter(e => !e.click).length === 0) throw new Error('Hier gibt es noch keine Töne zum Abspielen.');
     queue.q.forEach(e => { if (e.ev) [e.ev].concat(e.ev.extra || []).forEach(t => ks(t.m)); });
     master = ac.createGain(); master.connect(ac.destination);
