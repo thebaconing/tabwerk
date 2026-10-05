@@ -235,3 +235,4 @@ fieldset.group legend { padding: 0 6px; font-size: 11.5px; text-transform: upper
 .dot.chordtone { fill: var(--brass); fill-opacity: .9; stroke: var(--brass); }
 .dt.chordtone { fill: var(--on-brass); }
 @media (max-width: 600px) { .sugg-list { grid-template-columns: 1fr; } }
+.staff .cname { font: 600 11px var(--f-body); fill: var(--brass); }

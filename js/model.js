@@ -30,7 +30,7 @@ function notePos(n) { return n.pos ? n.pos : (n.s != null ? [{ s: n.s, f: n.f }]
 function chordFretNear(root, q, ref) {
   const want = new Set(buildChord(root, q).map(t => t.pc));
   let best = null;
-  for (let f = 0; f <= 12; f++) {
+  for (let f = 0; f <= 15; f++) {
     const v = chordVoicing(root, q, f);
     if (!v.length) continue;
     const have = new Set(v.map(p => mod12(OPEN[p.s] + p.f)));
@@ -38,11 +38,21 @@ function chordFretNear(root, q, ref) {
     const fr = v.map(p => p.f).filter(x => x > 0);
     const center = fr.length ? fr.reduce((a, b) => a + b, 0) / fr.length : 0;
     const span = fr.length ? Math.max(...fr) - Math.min(...fr) : 0;
-    const score = (complete ? 0 : 100) + (span > 3 ? 20 : 0) + (v.length < 3 && q !== '5' ? 30 : 0) + (ref ? Math.abs(center - ref.f) * 2 + Math.abs(v[0].s - ref.s) * 0.5 : center) + f * 0.01;
+    const opens = v.filter(p => p.f === 0).length;
+    const score = (complete ? 0 : 100) + (span > 3 ? 20 : 0) + span * 1.5 - opens * 0.3 + (v.length < 3 && q !== '5' ? 30 : 0) + (ref ? Math.abs(center - ref.f) * 2 + Math.abs(v[0].s - ref.s) * 0.5 : center) + f * 0.01;
     if (!best || score < best.score) best = { f, score, voicing: v };
   }
   return best ? best.f : 0;
 }
+// Powerchord zum Akkord: Grundton, Quinte des Akkords (bei ° und m7♭5 die verminderte), Oktave
+function powerVoicing(root, q, f) {
+  const v = chordVoicing(root, '5', f);
+  const iv = CHORDS[q] ? CHORDS[q].iv : [0, 7];
+  const fifth = iv.includes(7) ? 7 : iv.includes(6) ? 6 : iv.includes(8) ? 8 : 7;
+  if (v[1]) v[1] = { s: v[1].s, f: v[1].f + fifth - 7 };
+  return v.filter(p => p.f >= 0);
+}
+function powerName(root, q) { const iv = CHORDS[q] ? CHORDS[q].iv : [0, 7]; return deName(root) + (iv.includes(7) || !iv.includes(6) ? '5' : '5♭'); }
 // Notenlängen, die zusammen genau einen Takt füllen (größte zuerst)
 function barPieces(len) {
   const out = []; let pos = 0;
@@ -210,7 +220,7 @@ function generateCore(b, meter = meterOf('4/4')) {
       const ps = notePos(n).slice().sort((a, c) => a.s - c.s);
       if (!ps.length) return;
       const evs = ps.map(p => noteEv({ s: p.s, f: p.f, m: OPEN[p.s] + p.f }, set, fifths));
-      notes.push(Object.assign(evs[0], { extra: evs.slice(1), tech: ps.length > 1 ? null : (n.tech || null), fi: i, uk }));
+      notes.push(Object.assign(evs[0], { extra: evs.slice(1), tech: ps.length > 1 ? null : (n.tech || null), fi: i, uk }, n.chord && ps.length > 1 ? { chordMeta: n.chord } : {}));
     });
     return [{ key: b.ref ? { root: b.ref.root, mode: b.ref.mode } : null, notes }];
   }
@@ -410,6 +420,7 @@ function evToNote(e) {
   if (e.kind !== 'note') return { rest: true, dur: e.uk };
   const n = { pos: [{ s: e.s, f: e.f }].concat((e.extra || []).map(x => ({ s: x.s, f: x.f }))), dur: e.uk };
   if (e.tech) n.tech = Object.assign({}, e.tech);
+  if (e.chordMeta) n.chord = Object.assign({}, e.chordMeta);
   return n;
 }
 function toFree(b, meter = meterOf('4/4')) {
@@ -480,5 +491,6 @@ function cleanNote(x) {
     if (x.tech.legato) t.legato = true; else if (x.tech.slide) t.slide = true;
     if (Object.keys(t).length) n.tech = t;
   }
+  if (x.chord && CHORD_ROOTS.includes(x.chord.root) && CHORDS[x.chord.quality] && pos.length > 1) n.chord = { root: x.chord.root, quality: x.chord.quality, power: !!x.chord.power };
   return n;
 }

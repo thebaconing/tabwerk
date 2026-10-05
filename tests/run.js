@@ -162,6 +162,17 @@ for (const r of T.CHORD_ROOTS) for (const q of Object.keys(T.CHORDS)) for (let f
   if (p.length) ok(T.degreeOf(set, T.OPEN[p[0].s] + p[0].f) === 0, `Griff ${r}${q} f${f}: Bass ist nicht der Grundton`);
 }
 
+// Lage nah am Ton: vollständige, spielbare Griffe, Powerchords mit passender Quinte
+for (const r of ['C', 'D', 'E', 'F', 'G', 'A', 'B', 'Bb', 'F#']) for (const q of ['maj', 'min', '7', 'm7', 'dim', '5']) for (const ref of [{ s: 0, f: 1 }, { s: 1, f: 5 }, { s: 2, f: 9 }, { s: 4, f: 12 }, null]) {
+  const f = T.chordFretNear(r, q, ref), v = T.chordVoicing(r, q, f), fr = v.map(p => p.f).filter(x => x > 0);
+  const want = new Set(T.buildChord(r, q).map(t => t.pc)), have = new Set(v.map(p => T.mod12(T.OPEN[p.s] + p.f)));
+  ok([...want].every(pc => have.has(pc)), `Griff nah ${r}${q} ${JSON.stringify(ref)}: unvollständig`);
+  ok(!fr.length || Math.max(...fr) - Math.min(...fr) <= 3, `Griff nah ${r}${q}: Spanne zu groß`);
+  ok(v.every((p, i) => !i || p.s === v[i - 1].s + 1), `Griff nah ${r}${q}: Lücke zwischen Saiten`);
+  const pv = T.powerVoicing(r, q, T.chordFretNear(r, '5', ref));
+  ok(pv.length >= 2 && T.degreeOf(T.buildChord(r, q), T.OPEN[pv[1].s] + pv[1].f) >= 0 && T.mod12(T.OPEN[pv[0].s] + pv[0].f) === T.pcOf(r), `Powerchord zu ${r}${q} falsch`);
+}
+
 // --- Taktarten: alle Bausteinarten in allen Taktarten ---
 for (const time of T.TIMES) {
   const m = T.meterOf(time);

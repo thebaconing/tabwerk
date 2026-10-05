@@ -84,7 +84,12 @@ function identifyChord(pcsIn) {
   }
   return null;
 }
-function chordOfEvent(e) { return e && e.kind === 'note' && e.extra && e.extra.length ? identifyChord([e.m].concat(e.extra.map(x => x.m))) : null; }
+function chordOfEvent(e) {
+  if (!e || e.kind !== 'note' || !e.extra || !e.extra.length) return null;
+  // gemerkter Akkord (z. B. Powerchord, der für Am steht) hat Vorrang
+  if (e.chordMeta) { const m = e.chordMeta; return { root: m.root, quality: m.quality, name: chordName(m.root, m.quality) + (m.power ? ' (als Powerchord)' : ''), pcs: buildChord(m.root, m.quality).map(t => t.pc) }; }
+  return identifyChord([e.m].concat(e.extra.map(x => x.m)));
+}
 // Letzter Akkord vor einer Stelle: in der freien Tonfolge vor fi, sonst im vorherigen Baustein
 function chordBefore(comp, bi, fi) {
   for (let i = bi; i >= 0; i--) {
