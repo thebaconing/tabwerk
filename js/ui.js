@@ -23,7 +23,7 @@ let comp = [];
 let sel = { bi: doc.blocks.length ? 0 : null, fi: null, fi2: null, k: null, k2: null };
 let hist = { undo: [], redo: [], last: null };
 const ui = { mode: 'after', dur: null, markStart: null, libConfirm: null, userScrollUntil: 0, multi: new Set(), chord: { root: 'A', q: 'min', fret: 0 }, clip: store.get('tabwerk-clip') };
-const prefs = Object.assign({ metro: true, loop: false, follow: true, theme: null, keyFilter: 'first', sugTab: 'scale', sugSeventh: false }, store.get(PREF_KEY) || {});
+const prefs = Object.assign({ countin: true, metro: true, loop: false, follow: true, theme: null, keyFilter: 'first', sugTab: 'scale', sugSeventh: false }, store.get(PREF_KEY) || {});
 if (prefs.theme && !document.documentElement.hasAttribute('data-theme')) document.documentElement.setAttribute('data-theme', prefs.theme);
 
 let saveT = 0;
@@ -822,10 +822,10 @@ async function play(only) {
   starting = true; setPlayUi(true, only);
   try {
     const ok = await Player.start(comp, only, {
-      bpm: () => doc.bpm, loop: () => $('loop').checked, metronome: () => $('metro').checked,
+      bpm: () => doc.bpm, countIn: () => $('countin').checked, loop: () => $('loop').checked, metronome: () => $('metro').checked,
       onNote: k => highlight(k), onStop: () => { highlight(null); setPlayUi(false); status(''); }
     });
-    if (ok) status(only != null ? `Spielt Baustein ${only + 1}: ${blockTitle(doc.blocks[only])}` : 'Spielt die ganze Folge, mit vier Klicks Einzähler.');
+    if (ok) status(only != null ? `Spielt Baustein ${only + 1}: ${blockTitle(doc.blocks[only])}` : 'Spielt die ganze Folge' + ($('countin').checked ? ', mit einem Takt Einzähler.' : '.'));
     else setPlayUi(false);
   } catch (err) { setPlayUi(false); status(err.message); }
   starting = false;
@@ -846,7 +846,7 @@ $('playBlock').onclick = () => { if (Player.isPlaying() || starting) Player.stop
 let bpmBefore = null;
 $('bpm').addEventListener('input', e => { if (bpmBefore == null) bpmBefore = doc.bpm; $('bpmOut').value = e.target.value; doc.bpm = +e.target.value; });
 $('bpm').addEventListener('change', e => { const v = +e.target.value; if (bpmBefore != null) doc.bpm = bpmBefore; bpmBefore = null; commit(d => { d.bpm = v; }, { coalesce: 'bpm', skipInsp: true }); });
-['metro', 'loop', 'follow'].forEach(id => { $(id).checked = prefs[id]; $(id).addEventListener('change', e => { prefs[id] = e.target.checked; savePrefs(); }); });
+['countin', 'metro', 'loop', 'follow'].forEach(id => { $(id).checked = prefs[id]; $(id).addEventListener('change', e => { prefs[id] = e.target.checked; savePrefs(); }); });
 const pauseFollow = () => { if (Player.isPlaying()) ui.userScrollUntil = Date.now() + 4000; };
 ['wheel', 'touchmove'].forEach(t => addEventListener(t, pauseFollow, { passive: true }));
 
