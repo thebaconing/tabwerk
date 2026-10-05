@@ -50,7 +50,13 @@ h2 { font: 700 18px/1.2 var(--f-display); margin: 0; letter-spacing: .005em; }
 .btn.primary:hover { filter: brightness(1.06); }
 .btn.danger { color: var(--error); }
 .btn.sm { padding: 4px 9px; font-size: 13px; }
-.btn:disabled { opacity: .45; cursor: default; }
+/* Nicht klickbar: kein Hintergrund, gestrichelter Rand, blasse Schrift, durchgestrichener Mauszeiger */
+:is(.btn, .chip, .seg button, .menu-list button):disabled,
+:is(.btn, .chip, .seg button, .menu-list button):disabled:hover {
+  background: transparent !important; color: var(--faint) !important; border-color: var(--line) !important;
+  border-style: dashed !important; box-shadow: none !important; filter: none !important; opacity: .6; cursor: not-allowed;
+}
+.seg button:disabled { border-style: none !important; text-decoration: line-through; text-decoration-color: var(--faint); }
 :is(.btn, .chip, .seg button, select, input, .blk, .fb-hit, .menu-list button):focus-visible { outline: 2px solid var(--brass); outline-offset: 2px; }
 select, input[type=number], input[type=text] { background: var(--surface-low); border: 1px solid var(--line); border-radius: 7px; padding: 6px 8px; width: 100%; min-width: 0; }
 .seg { display: flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; background: var(--surface-low); }
