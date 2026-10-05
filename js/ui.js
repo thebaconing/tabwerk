@@ -1,0 +1,709 @@
+// Oberfläche: Bibliothek, Bausteinliste, Einstellungen, Tabulatur, Eingabe, Wiedergabe, Export.
+'use strict';
+(() => {
+const $ = id => document.getElementById(id);
+const LS_KEY = 'tabwerk-v1', PREF_KEY = 'tabwerk-prefs';
+const store = {
+  get(k) { try { return JSON.parse(localStorage.getItem(k) || 'null'); } catch (e) { return null; } },
+  set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); return true; } catch (e) { return false; } }
+};
+
+// ---------- Zustand ----------
+let lib = store.get(LS_KEY);
+if (!lib || !Array.isArray(lib.docs) || !lib.docs.length) {
+  const ex = exampleDoc();
+  lib = { docs: [ex], currentId: ex.id };
+} else {
+  lib.docs = lib.docs.map(d => { try { return sanitizeDoc(d); } catch (e) { return null; } }).filter(Boolean);
+  if (!lib.docs.length) { const ex = exampleDoc(); lib.docs = [ex]; lib.currentId = ex.id; }
+}
+let doc = lib.docs.find(d => d.id === lib.currentId) || lib.docs[0];
+lib.currentId = doc.id;
+let comp = [];
+let sel = { bi: doc.blocks.length ? 0 : null, fi: null, k: null };
+let hist = { undo: [], redo: [], last: null };
+const ui = { replace: false, markStart: null, libConfirm: null, userScrollUntil: 0, playingK: null };
+const prefs = Object.assign({ metro: true, loop: false, follow: true, theme: null }, store.get(PREF_KEY) || {});
+if (prefs.theme && !document.documentElement.hasAttribute('data-theme')) document.documentElement.setAttribute('data-theme', prefs.theme);
+
+let saveT = 0;
+function saveSoon() { clearTimeout(saveT); saveT = setTimeout(() => { if (!store.set(LS_KEY, lib)) status('Speichern im Browser nicht möglich. Bitte über „Datei“ sichern.'); }, 250); }
+function savePrefs() { store.set(PREF_KEY, prefs); }
+function status(t) { $('status').textContent = t || ''; }
+const cur = () => sel.bi != null ? doc.blocks[sel.bi] : null;
+
+// Änderung mit Rückgängig-Verlauf
+function commit(fn, o = {}) {
+  const before = JSON.stringify(doc);
+  fn(doc);
+  if (JSON.stringify(doc) === before) return false;
+  if (!(o.coalesce && o.coalesce === hist.last)) { hist.undo.push(before); if (hist.undo.length > 150) hist.undo.shift(); }
+  hist.last = o.coalesce || null; hist.redo = [];
+  doc.updated = Date.now();
+  refresh(o);
+  return true;
+}
+function restore(json) {
+  const fresh = JSON.parse(json);
+  Object.keys(doc).forEach(k => delete doc[k]);
+  Object.assign(doc, fresh);
+  if (sel.bi != null && sel.bi >= doc.blocks.length) sel.bi = doc.blocks.length ? doc.blocks.length - 1 : null;
+  sel.fi = null; sel.k = null; hist.last = null; ui.markStart = null;
+  refresh();
+}
+function undo() { if (!hist.undo.length) return; hist.redo.push(JSON.stringify(doc)); restore(hist.undo.pop()); status('Rückgängig gemacht.'); }
+function redo() { if (!hist.redo.length) return; hist.undo.push(JSON.stringify(doc)); restore(hist.redo.pop()); status('Wiederhergestellt.'); }
+
+function refresh(o = {}) {
+  comp = computeDoc(doc);
+  if (sel.bi != null && sel.fi != null) {
+    const B = comp[sel.bi];
+    const e = B && B.measures.flatMap(m => m.events).find(x => x.fi === sel.fi);
+    sel.k = e ? e.k : null;
+    if (!e) sel.fi = null;
+  }
+  if (!o.skipName) $('docName').value = doc.name;
+  renderBlocks();
+  if (!o.skipInsp) renderInspector();
+  renderSheet();
+  $('undo').disabled = !hist.undo.length; $('redo').disabled = !hist.redo.length;
+  $('bpm').value = doc.bpm; $('bpmOut').value = doc.bpm;
+  saveSoon();
+}
+
+// ---------- Hilfen ----------
+const h = escHtml;
+function segHTML(key, opts, val, extra = '') {
+  return `<div class="seg" data-seg="${key}" ${extra}>` + opts.map(([v, l, dis]) => `<button type="button" data-v="${v}" aria-pressed="${String(v) === String(val)}"${dis ? ' disabled' : ''}>${l}</button>`).join('') + '</div>';
+}
+function selHTML(key, opts, val, id) {
+  return `<select data-field="${key}" id="${id || 'f-' + key}">` + opts.map(([v, l]) => `<option value="${h(v)}"${String(v) === String(val) ? ' selected' : ''}>${h(l)}</option>`).join('') + '</select>';
+}
+function ctl(label, inner, cls = '') { return `<div class="ctl ${cls}"><span class="label">${label}</span>${inner}</div>`; }
+function rootOpts(mode) { return ROOTS[mode].map(([r, f]) => [r, `${keyName(r, mode)} (${f === 0 ? 'ohne' : Math.abs(f) + (f > 0 ? ' ♯' : ' ♭')})`]); }
+function relRoot(root, from, to) {
+  const f = (ROOTS[from].find(x => x[0] === root) || [0, 0])[1];
+  return (ROOTS[to].find(x => x[1] === f) || ROOTS[to][0])[0];
+}
+function unitOpts(withDefault) { return (withDefault ? [['', 'Standard des Musters']] : []).concat(Object.entries(UNITS).map(([k, u]) => [k, u.label])); }
+function fmtDate(t) { const d = new Date(t); return d.toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit', year: 'numeric' }) + ', ' + d.toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' }); }
+function slug(t) { return (t || 'tabwerk').normalize('NFKD').replace(/[̀-ͯ]/g, '').replace(/ß/g, 'ss').replace(/[^A-Za-z0-9]+/g, '_').replace(/^_|_$/g, '') || 'tabwerk'; }
+function evByK(k) { for (const B of comp) for (const M of B.measures) for (const e of M.events) if (e.k === k) return { B, e }; return null; }
+function noteLabel(e) { return `${STR_NAMES[e.s]}-Saite, Bund ${e.f} (${deNote(e.sp.letter, e.sp.alter)})`; }
+
+// ---------- Bausteinliste ----------
+function blockMeta(B) {
+  const b = B.block, u = b.kind === 'exercise' && !b.unit ? UNITS[SECTIONS.find(s => s.id === b.section).unit] : UNITS[b.unit];
+  const parts = [u.label, `${B.measures.length} ${B.measures.length === 1 ? 'Takt' : 'Takte'}`];
+  if (b.series && b.series.kind !== 'none' && b.series.items.length) parts.push(`Reihe: ${{ keys: 'Tonarten', positions: 'Lagen', octaves: 'Oktaven' }[b.series.kind]} ×${b.series.items.length + 1}`);
+  return parts;
+}
+function renderBlocks() {
+  const ol = $('blocks');
+  $('blockCount').textContent = doc.blocks.length ? `${doc.blocks.length}` : '';
+  if (!doc.blocks.length) { ol.innerHTML = '<li class="empty">Noch keine Bausteine. Füge unten den ersten hinzu.</li>'; return; }
+  ol.innerHTML = comp.map((B, i) => `<li class="blk${i === sel.bi ? ' sel' : ''}" data-bi="${i}" draggable="true" tabindex="0" aria-label="Baustein ${i + 1}: ${h(blockTitle(B.block))}">
+    <span class="handle" title="Ziehen zum Verschieben" aria-hidden="true">⋮⋮</span>
+    <div class="blk-main"><div class="kind">${i + 1} · ${KINDS[B.block.kind]}</div><div class="blk-title">${h(blockTitle(B.block))}</div><div class="blk-meta">${blockMeta(B).map(x => `<span>${h(x)}</span>`).join('')}</div></div>
+    <div class="blk-tools">
+      <button class="btn ghost" data-act="up" title="Nach oben" aria-label="Nach oben"${i === 0 ? ' disabled' : ''}>↑</button>
+      <button class="btn ghost" data-act="down" title="Nach unten" aria-label="Nach unten"${i === doc.blocks.length - 1 ? ' disabled' : ''}>↓</button>
+      <button class="btn ghost" data-act="dup" title="Kopieren" aria-label="Kopieren">⧉</button>
+      <button class="btn ghost danger" data-act="del" title="Löschen" aria-label="Löschen">✕</button>
+    </div></li>`).join('');
+}
+function selectBlock(i, scroll) {
+  if (sel.bi === i) return;
+  sel = { bi: i, fi: null, k: null }; ui.markStart = null;
+  renderBlocks(); renderInspector(); markSheetSel();
+  if (scroll) { const el = document.querySelector(`.tb[data-bi="${i}"]`); if (el) el.scrollIntoView({ block: 'nearest', behavior: reduced() ? 'auto' : 'smooth' }); }
+}
+function moveBlock(from, to) {
+  if (to < 0 || to >= doc.blocks.length || from === to) return;
+  commit(d => { const [b] = d.blocks.splice(from, 1); d.blocks.splice(to, 0, b); });
+  sel.bi = to; sel.fi = null; sel.k = null; refresh();
+}
+$('blocks').addEventListener('click', e => {
+  const li = e.target.closest('.blk'); if (!li) return;
+  const i = +li.dataset.bi, act = e.target.closest('[data-act]');
+  if (!act) {
+    const narrow = innerWidth < 980;
+    selectBlock(i, !narrow);
+    if (narrow) $('inspector').scrollIntoView({ block: 'start', behavior: reduced() ? 'auto' : 'smooth' });
+    return;
+  }
+  const a = act.dataset.act;
+  if (a === 'up') moveBlock(i, i - 1);
+  else if (a === 'down') moveBlock(i, i + 1);
+  else if (a === 'dup') { commit(d => { const c = JSON.parse(JSON.stringify(d.blocks[i])); c.id = uid(); d.blocks.splice(i + 1, 0, c); }); sel = { bi: i + 1, fi: null, k: null }; refresh(); status('Baustein kopiert.'); }
+  else if (a === 'del') { const t = blockTitle(doc.blocks[i]); commit(d => d.blocks.splice(i, 1)); sel = { bi: doc.blocks.length ? Math.min(i, doc.blocks.length - 1) : null, fi: null, k: null }; refresh(); status(`„${t}“ gelöscht. Rückgängig mit Strg+Z.`); }
+});
+$('blocks').addEventListener('keydown', e => {
+  const li = e.target.closest('.blk'); if (!li || e.target !== li) return;
+  const i = +li.dataset.bi;
+  if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); selectBlock(i, true); }
+  if (e.altKey && e.key === 'ArrowUp') { e.preventDefault(); moveBlock(i, i - 1); focusBlock(i - 1); }
+  if (e.altKey && e.key === 'ArrowDown') { e.preventDefault(); moveBlock(i, i + 1); focusBlock(i + 1); }
+});
+function focusBlock(i) { const el = document.querySelector(`.blk[data-bi="${i}"]`); if (el) el.focus(); }
+// Ziehen und Ablegen
+let dragFrom = null;
+$('blocks').addEventListener('dragstart', e => { const li = e.target.closest('.blk'); if (!li) return; dragFrom = +li.dataset.bi; li.classList.add('dragging'); e.dataTransfer.effectAllowed = 'move'; try { e.dataTransfer.setData('text/plain', String(dragFrom)); } catch (x) {} });
+$('blocks').addEventListener('dragend', () => { dragFrom = null; document.querySelectorAll('.blk').forEach(x => x.classList.remove('dragging', 'drop-before', 'drop-after')); });
+$('blocks').addEventListener('dragover', e => {
+  if (dragFrom == null) return; const li = e.target.closest('.blk'); if (!li) return;
+  e.preventDefault();
+  const r = li.getBoundingClientRect(), after = e.clientY > r.top + r.height / 2;
+  document.querySelectorAll('.blk').forEach(x => x.classList.remove('drop-before', 'drop-after'));
+  li.classList.add(after ? 'drop-after' : 'drop-before');
+});
+$('blocks').addEventListener('drop', e => {
+  if (dragFrom == null) return; const li = e.target.closest('.blk'); if (!li) return;
+  e.preventDefault();
+  const r = li.getBoundingClientRect(), after = e.clientY > r.top + r.height / 2;
+  let to = +li.dataset.bi + (after ? 1 : 0); if (to > dragFrom) to--;
+  const from = dragFrom; dragFrom = null;
+  moveBlock(from, to);
+});
+$('addGrid').addEventListener('click', e => {
+  const b = e.target.closest('[data-kind]'); if (!b) return;
+  const prev = cur();
+  const like = prev && (prev.type || prev.ref) ? { type: prev.type || (prev.ref && prev.ref.type), mode: prev.mode || (prev.ref && prev.ref.mode), root: prev.root && ROOTS[prev.mode || 'minor'] ? prev.root : (prev.ref && prev.ref.root) } : null;
+  const nb = newBlock(b.dataset.kind, like && like.mode && ROOTS[like.mode].some(r => r[0] === like.root) ? like : null);
+  const at = sel.bi == null ? doc.blocks.length : sel.bi + 1;
+  commit(d => d.blocks.splice(at, 0, nb));
+  sel = { bi: at, fi: null, k: null }; refresh();
+  status(`${KINDS[nb.kind]} hinzugefügt.` + (nb.kind === 'free' ? ' Töne per Klick aufs Griffbrett eingeben.' : ''));
+  const ins = $('inspector'); if (ins.getBoundingClientRect().top < 0 || ins.getBoundingClientRect().top > innerHeight * .6) ins.scrollIntoView({ block: 'start', behavior: reduced() ? 'auto' : 'smooth' });
+});
+
+// ---------- Einstellungen ----------
+function renderInspector() {
+  const el = $('inspector'), b = cur();
+  if (!b) { el.innerHTML = '<div class="empty">Wähle links einen Baustein aus oder füge einen neuen hinzu. Jeder Baustein beginnt in der Tabulatur auf einem neuen Takt.</div>'; return; }
+  const B = comp[sel.bi];
+  let html = `<div class="insp-head"><span class="kind">${KINDS[b.kind]}</span><input type="text" class="title-in" id="f-title" placeholder="${h(blockTitle(Object.assign({}, b, { title: '' })))}" value="${h(b.title || '')}" aria-label="Titel des Bausteins" maxlength="80"></div>`;
+  if (B.err) html += `<div class="warn">Dieser Baustein lässt sich nicht berechnen: ${h(B.err)}</div>`;
+  if (B.warn.length) html += `<div class="warn">${B.warn.map(h).join('<br>')}</div>`;
+  const kindHTML = { exercise: inspExercise, scale: inspScale, chord: inspChord, prog: inspProg, free: inspFree }[b.kind](b, B);
+  html += kindHTML;
+  html += inspSeries(b);
+  el.innerHTML = html;
+}
+function keyControls(b) {
+  return ctl('Leiter', segHTML('type', [['scale', 'Tonleiter'], ['penta', 'Pentatonik'], ['blues', 'Blues']], b.type)) +
+    ctl('Tongeschlecht', segHTML('mode', [['minor', 'Moll'], ['major', 'Dur']], b.mode)) +
+    ctl('Grundton', selHTML('root', rootOpts(b.mode), b.root)) +
+    ctl('Fingersatz', segHTML('system', [['pos', 'Lage'], ['nps', b.type === 'scale' ? '3 pro Saite' : b.type === 'penta' ? 'Boxen' : 'Boxen + Blue Note']], b.system));
+}
+function shapeOpts(b) {
+  const { set, shapes } = blockShape(b), best = bestShape(shapes).f;
+  return shapes.map(s => {
+    const fs = s.notes.map(n => n.f), d = set[degreeOf(set, s.notes[0].m)];
+    return [s.f, `Bund ${Math.min(...fs)}–${Math.max(...fs)} · ab ${deNote(d.letter, d.alter)}${s.f === best ? ' · größter Umfang' : ''}`];
+  });
+}
+function shapeBoard(set, shape, cls, opt = {}) {
+  const fs = shape.notes.map(n => n.f), lo = Math.min(...fs) === 0 ? 0 : Math.max(0, Math.min(...fs)), hi = Math.max(Math.max(...fs), lo + 4);
+  const dots = shape.notes.map((n, i) => {
+    const d = set[degreeOf(set, n.m)];
+    return { s: n.s, f: n.f, cls: cls(i, d), label: deNote(d.letter, d.alter), blue: d.blue, end: opt.ends && opt.ends.includes(i) };
+  });
+  return `<div class="fb-wrap" id="board">${renderFretboard({ lo, hi, dots, hit: !!opt.hit })}</div>`;
+}
+function inspExercise(b) {
+  const { set, shape } = blockShape(b);
+  return `<div class="grid">${keyControls(b)}
+    ${ctl('Lage', selHTML('fret', shapeOpts(b), shape.f))}
+    ${ctl('Umfang', segHTML('range', [['root', 'ab Grundton'], ['full', 'ganze Lage']], b.range))}
+    ${ctl('Muster', `<div class="chips">${SECTIONS.map(s => `<button type="button" class="chip" data-chip="section" data-v="${s.id}" aria-pressed="${b.section === s.id}">${sectionTitle(s.id, b.type)}</button>`).join('')}</div>`, 'wide')}
+    ${ctl('Notenwert', selHTML('unit', unitOpts(true), b.unit || ''))}
+  </div>${shapeBoard(set, shape, (i, d) => d.degree === 0 ? 'on-root' : 'on')}`;
+}
+function inspScale(b) {
+  const { set, shape } = blockShape(b), r = scaleRange(b, shape);
+  const ends = ui.markStart != null ? [ui.markStart] : [r.from, r.to];
+  const hint = ui.markStart != null ? 'Jetzt den Endton anklicken.' : 'Ausschnitt festlegen: Startton und dann Endton im Griffbild anklicken.';
+  return `<div class="grid">${keyControls(b)}
+    ${ctl('Lage', selHTML('fret', shapeOpts(b), shape.f))}
+    ${ctl('Richtung', segHTML('dir', [['up', 'auf'], ['down', 'ab'], ['updown', 'auf + ab'], ['downup', 'ab + auf']], b.dir))}
+    ${ctl('Notenwert', selHTML('unit', unitOpts(false), b.unit))}
+  </div>
+  <div class="toolbar"><span class="hint">${hint}</span><span class="sep"></span>
+    <button class="btn sm" data-do="rangeAll">Ganze Lage</button><button class="btn sm" data-do="rangeRoot">Ab tiefstem Grundton</button><button class="btn sm" data-do="rangeOct">Eine Oktave</button></div>
+  ${shapeBoard(set, shape, (i, d) => (ui.markStart != null ? i === ui.markStart : i >= r.from && i <= r.to) ? (d.degree === 0 ? 'on-root' : 'on') : 'off', { ends, hit: true })}
+  <p class="hint">${r.to - r.from + 1} Töne von ${noteName(set, shape.notes[r.from])} bis ${noteName(set, shape.notes[r.to])}.</p>`;
+}
+function noteName(set, n) { const d = set[degreeOf(set, n.m)]; return `${deNote(d.letter, d.alter)} (${STR_NAMES[n.s]}-Saite, Bund ${n.f})`; }
+function chordControls(b) {
+  return ctl(`Lage <em>ab Bund <output id="fretOut">${b.fret}</output></em>`, `<div class="range-row"><input type="range" min="0" max="15" step="1" value="${b.fret}" data-range="fret" aria-label="Lage ab Bund"></div>`) +
+    ctl('Umfang', segHTML('range', [['oct1', '1 Oktave'], ['oct2', '2 Oktaven'], ['all', 'ganze Lage']], b.range)) +
+    ctl('Muster', segHTML('pattern', [['up', 'auf'], ['down', 'ab'], ['updown', 'auf + ab']], b.pattern)) +
+    ctl(b.kind === 'prog' ? 'Länge pro Akkord' : 'Länge', segHTML('length', [['once', 'einmal'], [1, '1 Takt'], [2, '2 Takte']], b.length)) +
+    ctl('Notenwert', selHTML('unit', unitOpts(false), b.unit));
+}
+function inspChord(b) {
+  const { set, shape } = blockShape(b);
+  const idx = new Set(arpeggioIdx(set, shape.notes, b.range, b.pattern, 'once', b.unit));
+  return `<div class="grid">
+    ${ctl('Grundton', selHTML('root', CHORD_ROOTS.map(r => [r, deName(r)]), b.root))}
+    ${ctl('Akkord', selHTML('quality', Object.entries(CHORDS).map(([k, c]) => [k, `${deName(b.root)}${c.sym} · ${c.label}`]), b.quality))}
+    ${chordControls(b)}
+  </div>${chordBoard(set, shape.notes, b.fret, i => idx.has(i))}
+  <p class="hint">Töne: ${set.map(t => deNote(t.letter, t.alter)).join(' · ')}</p>`;
+}
+function chordBoard(set, notes, fret, inArp) {
+  const lo = fret, hi = fret + 5;
+  const dots = notes.map((n, i) => { const d = set[degreeOf(set, n.m)]; return { s: n.s, f: n.f, cls: inArp(i) ? (d.degree === 0 ? 'on-root' : 'on') : 'off', label: deNote(d.letter, d.alter) }; });
+  return `<div class="fb-wrap" id="board">${renderFretboard({ lo, hi, dots })}</div>`;
+}
+function inspProg(b) {
+  const chords = progChords(b), sc = buildScale(b.root, b.mode, 'scale');
+  const degOpts = sc.map((t, i) => [i, `${ROMAN[i]} · ${deNote(t.letter, t.alter)}`]);
+  const qOpts = [['auto', 'leitereigen']].concat(Object.entries(CHORDS).map(([k, c]) => [k, c.sym || 'Dur']));
+  const first = chords[0];
+  let board = '';
+  if (first) { const set = buildChord(first.root, first.quality), notes = shapePosition(set, b.fret); board = chordBoard(set, notes, b.fret, () => true) + `<p class="hint">Griffbild: ${h(chordName(first.root, first.quality))}, der erste Akkord in dieser Lage.</p>`; }
+  return `<div class="grid">
+    ${ctl('Tongeschlecht', segHTML('mode', [['major', 'Dur'], ['minor', 'Moll']], b.mode))}
+    ${ctl('Tonart', selHTML('root', rootOpts(b.mode), b.root))}
+    ${ctl('Akkordart', segHTML('seventh', [[false, 'Dreiklänge'], [true, 'Vierklänge']], b.seventh))}
+    ${ctl('Vorlage', `<select id="f-preset" data-do-change="preset"><option value="">Vorlage wählen …</option>${PROG_PRESETS.map(p => `<option value="${p.id}">${h(p.label)}</option>`).join('')}</select>`)}
+    ${ctl('Akkorde <em>(Stufe · Art)</em>', `<div class="prog-chords">${b.chords.map((c, i) => `<div class="pc"><b>${h(chordName(chords[i].root, chords[i].quality))}</b>
+        <select data-pc="${i}" data-pk="deg" aria-label="Stufe von Akkord ${i + 1}">${degOpts.map(([v, l]) => `<option value="${v}"${v === c.deg ? ' selected' : ''}>${h(l)}</option>`).join('')}</select>
+        <select data-pc="${i}" data-pk="q" aria-label="Art von Akkord ${i + 1}">${qOpts.map(([v, l]) => `<option value="${v}"${v === c.q ? ' selected' : ''}>${h(l)}</option>`).join('')}</select>
+        <button class="btn ghost sm" data-pcdel="${i}" aria-label="Akkord ${i + 1} entfernen">✕</button></div>`).join('')}
+      <button class="btn sm" data-do="pcAdd">+ Akkord</button></div>`, 'wide')}
+    ${chordControls(b)}
+  </div>${board}`;
+}
+function inspFree(b, B) {
+  const ref = b.ref;
+  const set = ref ? buildScale(ref.root, ref.mode, ref.type) : null;
+  const n = sel.fi != null ? b.notes[sel.fi] : null;
+  const isNote = n && !n.rest;
+  const tech = isNote ? (n.tech || {}) : {};
+  const notes = B.measures.flatMap(m => m.events).filter(e => e.kind === 'note');
+  const lo = 0, hi = Math.max(15, ...notes.map(e => e.f + 1));
+  const dots = [];
+  if (set) for (let s = 0; s < 6; s++) for (let f = 0; f <= hi; f++) { const m = OPEN[s] + f, d = degreeOf(set, m); if (d >= 0) dots.push({ s, f, cls: 'ghost', label: deNote(set[d].letter, set[d].alter), blue: set[d].blue }); }
+  if (isNote) { const i = dots.findIndex(d => d.s === n.s && d.f === n.f); if (i >= 0) dots.splice(i, 1); dots.push({ s: n.s, f: n.f, cls: 'on-root', label: deNote(...Object.values(spellMidi(OPEN[n.s] + n.f, set, ref ? fifthsOf(ref.root, ref.mode) : 0))), end: true }); }
+  const selTxt = sel.fi == null ? 'Kein Ton ausgewählt: Klicks hängen neue Töne ans Ende an.' : n.rest ? `Pause ${sel.fi + 1} ausgewählt.` : `Ton ${sel.fi + 1} ausgewählt: ${STR_NAMES[n.s]}-Saite, Bund ${n.f}.`;
+  return `<div class="grid">
+    ${ctl('Bezugsleiter', selHTML('reftype', [['none', 'keine'], ['scale', 'Tonleiter'], ['penta', 'Pentatonik'], ['blues', 'Blues']], ref ? ref.type : 'none'))}
+    ${ref ? ctl('Tongeschlecht', segHTML('refmode', [['minor', 'Moll'], ['major', 'Dur']], ref.mode)) + ctl('Grundton', selHTML('refroot', rootOpts(ref.mode), ref.root)) : ''}
+    ${ctl('Notenwert', selHTML('unit', unitOpts(false), b.unit))}
+  </div>
+  <div class="toolbar" role="toolbar" aria-label="Töne bearbeiten">
+    ${segHTML('insmode', [['after', 'Einfügen'], ['replace', 'Ersetzen']], ui.replace ? 'replace' : 'after', 'aria-label="Klick aufs Griffbrett"')}
+    <button class="btn sm" data-do="rest">Pause</button>
+    <button class="btn sm" data-do="del"${sel.fi == null ? ' disabled' : ''}>Löschen</button>
+    <button class="btn sm" data-do="prev" aria-label="Vorheriger Ton"${!b.notes.length ? ' disabled' : ''}>◀</button>
+    <button class="btn sm" data-do="next" aria-label="Nächster Ton"${!b.notes.length ? ' disabled' : ''}>▶</button>
+    <button class="btn sm" data-do="desel"${sel.fi == null ? ' disabled' : ''}>Auswahl aufheben</button>
+    <span class="sep"></span>
+    <button class="btn sm" data-tech="bend1" aria-pressed="${tech.bend === 1}"${isNote ? '' : ' disabled'}>Bending ½</button>
+    <button class="btn sm" data-tech="bend2" aria-pressed="${tech.bend === 2}"${isNote ? '' : ' disabled'}>Bending 1</button>
+    <button class="btn sm" data-tech="release" aria-pressed="${!!tech.release}"${isNote && tech.bend ? '' : ' disabled'}>Release</button>
+    <button class="btn sm" data-tech="legato" aria-pressed="${!!tech.legato}"${isNote ? '' : ' disabled'} title="Bindung zum nächsten Ton: aufwärts Hammer-on, abwärts Pull-off">Hammer-on / Pull-off</button>
+    <button class="btn sm" data-tech="slide" aria-pressed="${!!tech.slide}"${isNote ? '' : ' disabled'} title="Slide zum nächsten Ton">Slide</button>
+  </div>
+  <p class="hint">${selTxt} Tastatur: Pfeiltasten wählen, Entf löscht, P setzt eine Pause.</p>
+  <div class="fb-wrap" id="board">${renderFretboard({ lo, hi, dots, hit: true, fw: 34 })}</div>`;
+}
+// Reihe
+function inspSeries(b) {
+  const ser = b.series || { kind: 'none', items: [] };
+  const opts = seriesOptions(b).map(k => [k, { none: 'keine', keys: 'Tonarten', positions: 'Lagen', octaves: 'Oktaven' }[k], k === 'keys' && b.kind === 'free' && !b.ref]);
+  let body = '';
+  if (ser.kind === 'keys') {
+    const roots = keyRootsFor(b);
+    body = `<div class="chips">${ser.items.map((it, i) => `<button type="button" class="chip" data-serdel="${i}" aria-label="${h(seriesLabel(b, 'keys', it))} entfernen">${h(seriesLabel(b, 'keys', it))}<span class="x" aria-hidden="true">✕</span></button>`).join('') || '<span class="hint">Noch keine weiteren Tonarten.</span>'}</div>
+      <div class="toolbar"><select id="serAdd" aria-label="Tonart hinzufügen" style="width:auto">${roots.map(r => `<option value="${r}">${h(seriesLabel(b, 'keys', r))}</option>`).join('')}</select><button class="btn sm" data-do="serAdd">Hinzufügen</button><span class="sep"></span>
+      <select id="serN" aria-label="Anzahl Schritte" style="width:auto">${[1, 2, 3, 4, 5, 6, 7, 11].map(n => `<option value="${n}"${n === 4 ? ' selected' : ''}>${n} Schritte</option>`).join('')}</select>
+      <button class="btn sm" data-preset="7">Quintenzirkel</button><button class="btn sm" data-preset="5">Quartenzirkel</button><button class="btn sm" data-preset="1">chromatisch</button><button class="btn sm" data-preset="2">Ganztöne</button></div>`;
+  } else if (ser.kind === 'positions') {
+    let frets;
+    if (b.kind === 'exercise' || b.kind === 'scale') { const { shapes, shape } = blockShape(b); frets = shapes.map(s => s.f).filter(f => f !== shape.f); }
+    else frets = Array.from({ length: 16 }, (_, i) => i).filter(f => f !== b.fret);
+    body = `<div class="chips">${frets.map(f => `<button type="button" class="chip" data-sertog="${f}" aria-pressed="${ser.items.includes(f)}">Bund ${f}</button>`).join('')}</div>`;
+  } else if (ser.kind === 'octaves') {
+    body = `<div class="chips">${[-2, -1, 1, 2].map(o => `<button type="button" class="chip" data-sertog="${o}" aria-pressed="${ser.items.includes(o)}">${o > 0 ? '+' : ''}${o} Oktave${Math.abs(o) > 1 ? 'n' : ''}</button>`).join('')}</div>`;
+  }
+  const expl = ser.kind === 'none' ? 'Den Baustein danach in weiteren Tonarten, Lagen oder Oktaven wiederholen.' : `Erst die Einstellung oben, dann ${ser.items.length ? 'diese ' + ser.items.length + ' ' + (ser.items.length === 1 ? 'Variante' : 'Varianten') : 'die hier gewählten Varianten'}, jede ab einem neuen Takt.`;
+  return `<fieldset class="group"><legend>Reihe</legend>${segHTML('serkind', opts, ser.kind)}<p class="hint">${expl}</p>${body}</fieldset>`;
+}
+function keyRootsFor(b) {
+  if (b.kind === 'chord') return CHORD_ROOTS;
+  const mode = b.kind === 'free' ? b.ref.mode : b.mode;
+  return ROOTS[mode].map(r => r[0]).slice().sort((a, c) => pcOf(a) - pcOf(c));
+}
+function baseRootOf(b) { return b.kind === 'free' ? b.ref.root : b.root; }
+function rootForPc(b, pc) {
+  const pool = keyRootsFor(b).filter(r => pcOf(r) === pc);
+  if (!pool.length) return null;
+  const flat = /b/.test(baseRootOf(b));
+  return pool.find(r => flat ? /b/.test(r) || r.length === 1 : !/b/.test(r)) || pool[0];
+}
+
+// Feld-Änderungen aus den Einstellungen
+function setField(key, raw) {
+  const b = cur(); if (!b) return;
+  let val = raw;
+  if (raw === 'true') val = true; else if (raw === 'false') val = false;
+  commit(d => {
+    const x = d.blocks[sel.bi];
+    switch (key) {
+      case 'type': x.type = val; x.fret = null; x.from = x.to = null; if (x.series.kind === 'positions') x.series.items = []; break;
+      case 'mode':
+        if (x.kind === 'prog') { if (val !== x.mode) x.root = relRoot(x.root, x.mode, val); x.mode = val; break; }
+        if (val !== x.mode) { x.root = relRoot(x.root, x.mode, val); x.fret = null; x.from = x.to = null; x.series = { kind: 'none', items: [] }; }
+        x.mode = val; break;
+      case 'root': x.root = val; if (x.kind !== 'chord' && x.kind !== 'prog') { x.fret = null; x.from = x.to = null; } if (x.series.kind === 'positions') x.series.items = []; break;
+      case 'system': x.system = val; x.fret = null; x.from = x.to = null; if (x.series.kind === 'positions') x.series.items = []; break;
+      case 'fret': x.fret = +val; if (x.kind === 'scale') x.from = x.to = null; if (x.series.kind === 'positions') x.series.items = x.series.items.filter(f => f !== +val); break;
+      case 'range': x.range = val; break;
+      case 'unit': x.unit = val || null; break;
+      case 'dir': x.dir = val; break;
+      case 'quality': x.quality = val; break;
+      case 'pattern': x.pattern = val; break;
+      case 'length': x.length = val === 'once' ? 'once' : +val; break;
+      case 'seventh': x.seventh = val; break;
+      case 'reftype': if (val === 'none') { x.ref = null; if (x.series.kind === 'keys') x.series = { kind: 'none', items: [] }; } else x.ref = Object.assign({ mode: 'minor', root: 'E' }, x.ref || {}, { type: val }); break;
+      case 'refmode': if (val !== x.ref.mode) { x.ref.root = relRoot(x.ref.root, x.ref.mode, val); x.series = { kind: 'none', items: [] }; } x.ref.mode = val; break;
+      case 'refroot': x.ref.root = val; break;
+      case 'serkind': x.series = { kind: val, items: [] }; break;
+    }
+  });
+}
+const ins = $('inspector');
+ins.addEventListener('click', e => {
+  const b = cur(); if (!b) return;
+  const segBtn = e.target.closest('.seg button');
+  if (segBtn) {
+    const key = segBtn.parentElement.dataset.seg, v = segBtn.dataset.v;
+    if (key === 'insmode') { ui.replace = v === 'replace'; renderInspector(); return; }
+    setField(key, v); return;
+  }
+  const chip = e.target.closest('[data-chip]');
+  if (chip) { commit(d => { d.blocks[sel.bi][chip.dataset.chip] = chip.dataset.v; }); return; }
+  const hit = e.target.closest('.fb-hit');
+  if (hit) { boardClick(+hit.dataset.s, +hit.dataset.f); return; }
+  const tech = e.target.closest('[data-tech]');
+  if (tech) { toggleTech(tech.dataset.tech); return; }
+  const sd = e.target.closest('[data-serdel]');
+  if (sd) { const i = +sd.dataset.serdel; commit(d => d.blocks[sel.bi].series.items.splice(i, 1)); return; }
+  const st = e.target.closest('[data-sertog]');
+  if (st) { const v = +st.dataset.sertog; commit(d => { const s = d.blocks[sel.bi].series; s.items = s.items.includes(v) ? s.items.filter(x => x !== v) : s.items.concat(v).sort((a, c) => a - c); }); return; }
+  const pr = e.target.closest('[data-preset]');
+  if (pr) {
+    const step = +pr.dataset.preset, n = +$('serN').value, base = pcOf(baseRootOf(b));
+    const items = []; for (let i = 1; i <= n; i++) { const r = rootForPc(b, mod12(base + step * i)); if (r && !items.includes(r)) items.push(r); }
+    commit(d => { d.blocks[sel.bi].series.items = items; });
+    return;
+  }
+  const pcdel = e.target.closest('[data-pcdel]');
+  if (pcdel) { const i = +pcdel.dataset.pcdel; commit(d => d.blocks[sel.bi].chords.splice(i, 1)); return; }
+  const act = e.target.closest('[data-do]');
+  if (!act) return;
+  const a = act.dataset.do;
+  if (a === 'serAdd') { const r = $('serAdd').value; commit(d => { const s = d.blocks[sel.bi].series; if (!s.items.includes(r)) s.items.push(r); }); }
+  else if (a === 'pcAdd') commit(d => { const c = d.blocks[sel.bi].chords; c.push(c.length ? Object.assign({}, c[c.length - 1]) : { deg: 0, q: 'auto' }); });
+  else if (a === 'rangeAll') { ui.markStart = null; commit(d => { const x = d.blocks[sel.bi], { shape } = blockShape(x); x.from = 0; x.to = shape.notes.length - 1; }); }
+  else if (a === 'rangeRoot') { ui.markStart = null; commit(d => { const x = d.blocks[sel.bi]; x.from = null; x.to = null; }); }
+  else if (a === 'rangeOct') { ui.markStart = null; commit(d => { const x = d.blocks[sel.bi], { set, shape } = blockShape(x); const r0 = Math.max(0, shape.rootIdx); x.from = r0; x.to = Math.min(shape.notes.length - 1, r0 + set.length); }); }
+  else if (a === 'rest') freeInsert({ rest: true });
+  else if (a === 'del') freeDelete();
+  else if (a === 'prev') freeMove(-1);
+  else if (a === 'next') freeMove(1);
+  else if (a === 'desel') { sel.fi = null; sel.k = null; renderInspector(); markSheetSel(); }
+  else if (a === 'convert') convertSelected();
+});
+ins.addEventListener('change', e => {
+  const t = e.target;
+  if (t.dataset.field) { setField(t.dataset.field, t.value); return; }
+  if (t.dataset.range === 'fret') { setField('fret', t.value); return; }
+  if (t.dataset.pc != null) { const i = +t.dataset.pc, k = t.dataset.pk, v = k === 'deg' ? +t.value : t.value; commit(d => { d.blocks[sel.bi].chords[i][k] = v; }); return; }
+  if (t.dataset.doChange === 'preset' && t.value) { const p = PROG_PRESETS.find(x => x.id === t.value); commit(d => { const x = d.blocks[sel.bi]; x.chords = p.chords.map(c => Object.assign({}, c)); if (p.id === 'i-iv-v' && x.mode !== 'minor') { x.root = relRoot(x.root, x.mode, 'minor'); x.mode = 'minor'; } }); }
+});
+ins.addEventListener('input', e => {
+  const t = e.target;
+  if (t.id === 'f-title') { const v = t.value; commit(d => { d.blocks[sel.bi].title = v.trim() ? v : undefined; if (!v.trim()) delete d.blocks[sel.bi].title; }, { coalesce: 'title-' + cur().id, skipInsp: true }); }
+  if (t.dataset.range === 'fret') { const o = $('fretOut'); if (o) o.value = t.value; }
+});
+
+// Klick aufs Griffbrett
+function boardClick(s, f) {
+  const b = cur(); if (!b) return;
+  const m = OPEN[s] + f;
+  if (b.kind === 'scale') {
+    const { shape } = blockShape(b);
+    const i = shape.notes.findIndex(n => n.s === s && n.f === f);
+    if (i < 0) { status('Dieser Ton gehört nicht zur Lage. Bitte einen markierten Ton anklicken.'); return; }
+    Player.preview(m);
+    if (ui.markStart == null) { ui.markStart = i; renderInspector(); status('Startton gesetzt. Jetzt den Endton anklicken.'); return; }
+    const a = ui.markStart; ui.markStart = null;
+    commit(d => { const x = d.blocks[sel.bi]; x.from = Math.min(a, i); x.to = Math.max(a, i); if (i < a && x.dir === 'up') x.dir = 'down'; else if (i > a && x.dir === 'down') x.dir = 'up'; });
+    status('Ausschnitt gesetzt.');
+    return;
+  }
+  if (b.kind === 'free') {
+    Player.preview(m);
+    if (ui.replace && sel.fi != null) {
+      const fi = sel.fi;
+      commit(d => { const n = d.blocks[sel.bi].notes[fi]; d.blocks[sel.bi].notes[fi] = { s, f, tech: n && n.tech ? n.tech : null }; });
+      freeMove(1, true);
+    } else freeInsert({ s, f });
+  }
+}
+function freeInsert(n) {
+  const b = cur(); if (!b || b.kind !== 'free') return;
+  const at = sel.fi == null ? b.notes.length : sel.fi + 1;
+  sel.fi = at;
+  commit(d => d.blocks[sel.bi].notes.splice(at, 0, n));
+  scrollSelIntoView();
+}
+function freeDelete() {
+  const b = cur(); if (!b || b.kind !== 'free' || sel.fi == null) return;
+  const at = sel.fi;
+  sel.fi = b.notes.length > 1 ? Math.max(0, at - 1) : null;
+  commit(d => d.blocks[sel.bi].notes.splice(at, 1));
+}
+function freeMove(dir, keepEnd) {
+  const b = cur(); if (!b || b.kind !== 'free' || !b.notes.length) return;
+  if (sel.fi == null) sel.fi = dir > 0 ? 0 : b.notes.length - 1;
+  else sel.fi = Math.max(0, Math.min(b.notes.length - 1, sel.fi + dir));
+  refresh(); scrollSelIntoView();
+}
+function toggleTech(t) {
+  const b = cur(); if (!b || b.kind !== 'free' || sel.fi == null) return;
+  commit(d => {
+    const n = d.blocks[sel.bi].notes[sel.fi]; if (!n || n.rest) return;
+    const tc = Object.assign({}, n.tech || {});
+    if (t === 'bend1') { tc.bend = tc.bend === 1 ? 0 : 1; if (!tc.bend) delete tc.release; }
+    if (t === 'bend2') { tc.bend = tc.bend === 2 ? 0 : 2; if (!tc.bend) delete tc.release; }
+    if (t === 'release') tc.release = !tc.release;
+    if (t === 'legato') { tc.legato = !tc.legato; if (tc.legato) tc.slide = false; }
+    if (t === 'slide') { tc.slide = !tc.slide; if (tc.slide) tc.legato = false; }
+    Object.keys(tc).forEach(k => { if (!tc[k]) delete tc[k]; });
+    n.tech = Object.keys(tc).length ? tc : null;
+  });
+}
+function convertSelected() {
+  const b = cur(); if (!b || b.kind === 'free') return;
+  const r = sel.k != null ? evByK(sel.k) : null, fi = r ? r.e.ni : null;
+  commit(d => { d.blocks[sel.bi] = toFree(d.blocks[sel.bi]); });
+  sel.fi = fi; refresh();
+  status('In freie Tonfolge umgewandelt. Rückgängig mit Strg+Z.');
+}
+
+// ---------- Tabulatur ----------
+function renderSheet() {
+  const el = $('sheet');
+  if (!comp.length) { el.innerHTML = '<div class="empty">Die Tabulatur erscheint hier, sobald es Bausteine gibt.</div>'; $('sheetInfo').textContent = ''; return; }
+  const totalM = comp.reduce((a, B) => a + B.measures.length, 0);
+  const secs = Math.round(totalM * 4 * 60 / doc.bpm);
+  $('sheetInfo').textContent = `${totalM} Takte · etwa ${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, '0')} Minuten bei ${doc.bpm} bpm`;
+  el.innerHTML = comp.map((B, i) => {
+    const svgs = B.measures.map((M, mi) => measureSvg(M, B.unit, { selK: sel.k, firstOfBlock: mi === 0, lastOfDoc: i === comp.length - 1 && mi === B.measures.length - 1 })).join('');
+    return `<div class="tb${i === sel.bi ? ' sel' : ''}" data-bi="${i}"><div class="tb-head" data-head="${i}"><span class="kind">${i + 1} · ${KINDS[B.block.kind]}</span><h3>${h(blockTitle(B.block))}</h3><span class="muted small">${h(B.unit.label)}</span>
+      <button class="btn sm" data-playb="${i}">▶ abspielen</button></div>
+      ${selNoteBox(B, i)}<div class="staff">${svgs || '<span class="hint">Noch keine Töne.</span>'}</div></div>`;
+  }).join('');
+}
+function selNoteBox(B, i) {
+  if (i !== sel.bi || sel.k == null || B.block.kind === 'free') return '';
+  const r = evByK(sel.k); if (!r) return '';
+  return `<div class="note-box">Ausgewählt: ${h(noteLabel(r.e))}. Einzelne Töne lassen sich in einer freien Tonfolge ändern. <button class="btn sm" data-do="convert">In freie Tonfolge umwandeln</button></div>`;
+}
+function markSheetSel() {
+  document.querySelectorAll('.tb').forEach(t => t.classList.toggle('sel', +t.dataset.bi === sel.bi));
+  document.querySelectorAll('.staff g.n.sel').forEach(g => g.classList.remove('sel'));
+  if (sel.k != null) { const g = document.querySelector(`.staff g.n[data-k="${sel.k}"]`); if (g) g.classList.add('sel'); }
+  document.querySelectorAll('.note-box').forEach(n => n.remove());
+  if (sel.bi != null && comp[sel.bi]) { const t = document.querySelector(`.tb[data-bi="${sel.bi}"] .staff`); const box = selNoteBox(comp[sel.bi], sel.bi); if (t && box) t.insertAdjacentHTML('beforebegin', box); }
+}
+function scrollSelIntoView() {
+  if (sel.k == null) return;
+  const g = document.querySelector(`.staff g.n[data-k="${sel.k}"]`); if (!g) return;
+  const r = g.getBoundingClientRect(), dockH = document.querySelector('.dock').offsetHeight;
+  if (r.top < 10 || r.bottom > innerHeight - dockH - 10) g.ownerSVGElement.scrollIntoView({ block: 'center', behavior: reduced() ? 'auto' : 'smooth' });
+}
+$('sheet').addEventListener('click', e => {
+  const pb = e.target.closest('[data-playb]'); if (pb) { play(+pb.dataset.playb); return; }
+  const cv = e.target.closest('[data-do="convert"]'); if (cv) { convertSelected(); return; }
+  const g = e.target.closest('g.n');
+  if (g) {
+    const k = +g.dataset.k, r = evByK(k); if (!r) return;
+    const bi = r.B.bi, changed = bi !== sel.bi;
+    sel = { bi, k, fi: r.e.fi != null ? r.e.fi : null }; ui.markStart = null;
+    if (r.e.kind === 'note') Player.preview(r.e.m);
+    if (changed) renderBlocks();
+    renderInspector(); markSheetSel();
+    return;
+  }
+  const hd = e.target.closest('[data-head]'); if (hd) selectBlock(+hd.dataset.head);
+});
+
+// ---------- Wiedergabe ----------
+let starting = false;
+const reduced = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
+function setPlayUi(on, only) {
+  $('play').textContent = on ? '■ Stopp' : '▶ Alles abspielen';
+  $('playBlock').textContent = on && only != null ? '■ Stopp' : '▶ Baustein';
+}
+async function play(only) {
+  if (Player.isPlaying() || starting) { Player.stop(); return; }
+  if (only === undefined && sel.bi == null) return;
+  starting = true; setPlayUi(true, only);
+  try {
+    const ok = await Player.start(comp, only, {
+      bpm: () => doc.bpm, loop: () => $('loop').checked, metronome: () => $('metro').checked,
+      onNote: k => highlight(k), onStop: () => { highlight(null); setPlayUi(false); status(''); }
+    });
+    if (ok) status(only != null ? `Spielt Baustein ${only + 1}: ${blockTitle(doc.blocks[only])}` : 'Spielt die ganze Folge, mit vier Klicks Einzähler.');
+    else setPlayUi(false);
+  } catch (err) { setPlayUi(false); status(err.message); }
+  starting = false;
+}
+function highlight(k) {
+  const prev = document.querySelector('.staff g.n.on'); if (prev) prev.classList.remove('on');
+  if (k == null) return;
+  const g = document.querySelector(`.staff g.n[data-k="${k}"]`); if (!g) return;
+  g.classList.add('on');
+  if ($('follow').checked && Date.now() > ui.userScrollUntil) {
+    const r = g.getBoundingClientRect(), dockH = document.querySelector('.dock').offsetHeight;
+    if (r.top < 20 || r.bottom > innerHeight - dockH - 10) g.ownerSVGElement.scrollIntoView({ block: 'center', behavior: reduced() ? 'auto' : 'smooth' });
+  }
+}
+$('play').onclick = () => play(null);
+$('playBlock').onclick = () => { if (Player.isPlaying() || starting) Player.stop(); else if (sel.bi != null) play(sel.bi); else status('Erst einen Baustein auswählen.'); };
+// Tempo: beim Ziehen sofort hörbar, beim Loslassen als Änderung gespeichert
+let bpmBefore = null;
+$('bpm').addEventListener('input', e => { if (bpmBefore == null) bpmBefore = doc.bpm; $('bpmOut').value = e.target.value; doc.bpm = +e.target.value; });
+$('bpm').addEventListener('change', e => { const v = +e.target.value; if (bpmBefore != null) doc.bpm = bpmBefore; bpmBefore = null; commit(d => { d.bpm = v; }, { coalesce: 'bpm', skipInsp: true }); });
+['metro', 'loop', 'follow'].forEach(id => { $(id).checked = prefs[id]; $(id).addEventListener('change', e => { prefs[id] = e.target.checked; savePrefs(); }); });
+const pauseFollow = () => { if (Player.isPlaying()) ui.userScrollUntil = Date.now() + 4000; };
+['wheel', 'touchmove'].forEach(t => addEventListener(t, pauseFollow, { passive: true }));
+
+// ---------- Name, Verlauf, Tastatur ----------
+$('docName').addEventListener('input', e => { const v = e.target.value; commit(d => { d.name = v || 'Ohne Namen'; }, { coalesce: 'name', skipName: true, skipInsp: true }); });
+$('undo').onclick = undo; $('redo').onclick = redo;
+addEventListener('keydown', e => {
+  const t = e.target, typing = t.matches && t.matches('input[type=text], input:not([type]), textarea, select, .docname');
+  const mod = e.ctrlKey || e.metaKey;
+  if (e.key === 'Escape') { closeMenu(); closeLib(); if (ui.markStart != null) { ui.markStart = null; renderInspector(); } return; }
+  if (typing) return;
+  if (mod && e.key.toLowerCase() === 'z' && !e.shiftKey) { e.preventDefault(); undo(); return; }
+  if (mod && (e.key.toLowerCase() === 'y' || (e.key.toLowerCase() === 'z' && e.shiftKey))) { e.preventDefault(); redo(); return; }
+  if (!$('lib').hidden) return;
+  const b = cur();
+  if (b && b.kind === 'free' && !t.closest('.blk')) {
+    if (e.key === 'Delete' || e.key === 'Backspace') { if (sel.fi != null) { e.preventDefault(); freeDelete(); } }
+    else if (e.key === 'ArrowLeft') { e.preventDefault(); freeMove(-1); }
+    else if (e.key === 'ArrowRight') { e.preventDefault(); freeMove(1); }
+    else if (e.key.toLowerCase() === 'p' && !mod) { e.preventDefault(); freeInsert({ rest: true }); }
+  }
+  if (['PageUp', 'PageDown', 'ArrowUp', 'ArrowDown', 'Home', 'End'].includes(e.key)) pauseFollow();
+});
+
+// ---------- Bibliothek ----------
+function openLib() { ui.libConfirm = null; renderLib(); $('lib').hidden = false; $('libClose').focus(); }
+function closeLib() { if ($('lib').hidden) return; $('lib').hidden = true; $('libBtn').focus(); }
+function renderLib() {
+  const docs = lib.docs.slice().sort((a, b) => (b.updated || 0) - (a.updated || 0));
+  $('libList').innerHTML = docs.map(d => `<li class="lib-item${d.id === doc.id ? ' cur' : ''}" data-id="${d.id}">
+    <div class="nm">${h(d.name)}${d.id === doc.id ? ' <span class="kind">geöffnet</span>' : ''}</div>
+    <div class="muted small">${d.blocks.length} ${d.blocks.length === 1 ? 'Baustein' : 'Bausteine'} · geändert ${fmtDate(d.updated || Date.now())}</div>
+    ${ui.libConfirm === d.id ? `<div class="row"><span>„${h(d.name)}“ endgültig löschen?</span><button class="btn sm danger" data-lib="delyes">Löschen</button><button class="btn sm" data-lib="delno">Abbrechen</button></div>`
+      : `<div class="row">${d.id !== doc.id ? '<button class="btn sm primary" data-lib="open">Öffnen</button>' : ''}<button class="btn sm" data-lib="dup">Kopieren</button><button class="btn sm danger" data-lib="del">Löschen</button></div>`}
+  </li>`).join('');
+}
+function switchDoc(d) {
+  Player.stop();
+  doc = d; lib.currentId = d.id;
+  sel = { bi: d.blocks.length ? 0 : null, fi: null, k: null }; hist = { undo: [], redo: [], last: null }; ui.markStart = null;
+  refresh();
+}
+$('libBtn').onclick = openLib;
+$('libClose').onclick = closeLib;
+$('lib').addEventListener('click', e => { if (e.target === $('lib')) closeLib(); });
+$('libNew').onclick = () => { const d = newDoc(); lib.docs.push(d); switchDoc(d); closeLib(); status('Neue Folge angelegt.'); $('docName').focus(); $('docName').select(); };
+$('libExample').onclick = () => { const d = exampleDoc(); lib.docs.push(d); switchDoc(d); closeLib(); status('Beispiel hinzugefügt.'); };
+$('libList').addEventListener('click', e => {
+  const btn = e.target.closest('[data-lib]'); if (!btn) return;
+  const id = btn.closest('.lib-item').dataset.id, d = lib.docs.find(x => x.id === id), a = btn.dataset.lib;
+  if (a === 'open') { switchDoc(d); closeLib(); }
+  else if (a === 'dup') { const c = JSON.parse(JSON.stringify(d)); c.id = uid(); c.name = d.name + ' (Kopie)'; c.updated = Date.now(); lib.docs.push(c); saveSoon(); renderLib(); }
+  else if (a === 'del') { ui.libConfirm = id; renderLib(); }
+  else if (a === 'delno') { ui.libConfirm = null; renderLib(); }
+  else if (a === 'delyes') {
+    lib.docs = lib.docs.filter(x => x.id !== id); ui.libConfirm = null;
+    if (!lib.docs.length) lib.docs.push(newDoc());
+    if (id === doc.id) switchDoc(lib.docs[0]); else saveSoon();
+    renderLib(); status('Folge gelöscht.');
+  }
+});
+
+// ---------- Datei: Export und Import ----------
+let downloads = null;
+(async () => { try { downloads = window.claude && window.claude.use ? await window.claude.use('downloads') : null; } catch (e) { downloads = null; } })();
+async function saveFile(name, data, mime) {
+  if (downloads) {
+    try { await downloads.save({ filename: name, data }); status(`${name} gespeichert.`); return true; }
+    catch (e) { status(e && e.code === 'declined' ? 'Speichern abgebrochen.' : 'Speichern ging hier nicht.'); return false; }
+  }
+  if (window.claude) { status('Speichern ist in dieser Ansicht nicht möglich.'); return false; }
+  const url = URL.createObjectURL(data instanceof Blob ? data : new Blob([data], { type: mime }));
+  const a = document.createElement('a'); a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1500);
+  status(`${name} gespeichert.`);
+  return true;
+}
+function closeMenu() { $('exportList').hidden = true; $('exportBtn').setAttribute('aria-expanded', 'false'); }
+$('exportBtn').onclick = e => { e.stopPropagation(); const l = $('exportList'); l.hidden = !l.hidden; $('exportBtn').setAttribute('aria-expanded', String(!l.hidden)); };
+document.addEventListener('click', e => { if (!e.target.closest('#exportMenu')) closeMenu(); });
+$('exportList').addEventListener('click', async e => {
+  const b = e.target.closest('[data-act]'); if (!b) return;
+  closeMenu();
+  const a = b.dataset.act, base = slug(doc.name);
+  if (a === 'musicxml') {
+    if (!doc.blocks.length) { status('Die Folge ist noch leer.'); return; }
+    const xml = toMusicXML(doc, comp);
+    if (window.claude) { if (await saveFile(base + '.zip', new Blob([makeZip([{ name: base + '.musicxml', data: xml }])]))) status('Gespeichert. ZIP entpacken und die .musicxml in Guitar Pro über Datei › Importieren › MusicXML öffnen.'); }
+    else if (await saveFile(base + '.musicxml', xml, 'application/vnd.recordare.musicxml+xml')) status('Gespeichert. In Guitar Pro über Datei › Importieren › MusicXML öffnen.');
+  } else if (a === 'json') saveFile(base + '.json', JSON.stringify({ app: 'tabwerk', version: 1, doc }, null, 1), 'application/json');
+  else if (a === 'libjson') saveFile('tabwerk_bibliothek.json', JSON.stringify({ app: 'tabwerk', version: 1, docs: lib.docs }, null, 1), 'application/json');
+  else if (a === 'import') $('importFile').click();
+  else if (a === 'copyxml') {
+    const xml = toMusicXML(doc, comp);
+    navigator.clipboard.writeText(xml).then(() => status(`MusicXML kopiert. In einen Editor einfügen und als ${base}.musicxml speichern.`)).catch(() => status('Kopieren wurde vom Browser blockiert.'));
+  }
+});
+$('importFile').addEventListener('change', async e => {
+  const f = e.target.files[0]; e.target.value = '';
+  if (!f) return;
+  try {
+    const data = JSON.parse(await f.text());
+    const list = Array.isArray(data.docs) ? data.docs : data.doc ? [data.doc] : Array.isArray(data.blocks) ? [data] : null;
+    if (!list) throw new Error('Die Datei enthält keine Übungsfolge.');
+    const added = list.map(sanitizeDoc).map(d => { if (lib.docs.some(x => x.id === d.id)) { d.id = uid(); d.name += ' (importiert)'; } d.updated = Date.now(); return d; });
+    lib.docs.push(...added); switchDoc(added[0]);
+    status(added.length === 1 ? `„${added[0].name}“ importiert.` : `${added.length} Folgen importiert.`);
+  } catch (err) { status('Import fehlgeschlagen: ' + (err.message || 'Datei nicht lesbar') + '.'); }
+});
+
+// ---------- Farbschema ----------
+$('themeBtn').onclick = () => {
+  const now = document.documentElement.getAttribute('data-theme') === 'light' ? 'dark' : 'light';
+  document.documentElement.setAttribute('data-theme', now); prefs.theme = now; savePrefs();
+};
+
+// Höhe der Wiedergabeleiste für den unteren Abstand
+const dock = document.querySelector('.dock');
+const setDockVar = () => document.documentElement.style.setProperty('--dock-h', dock.offsetHeight + 'px');
+if (window.ResizeObserver) new ResizeObserver(setDockVar).observe(dock);
+setDockVar();
+
+refresh();
+})();

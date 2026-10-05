@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<!--HEAD-->
+<title>Tabwerk</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&family=IBM+Plex+Mono:wght@500;600&display=swap">
+<link rel="stylesheet" href="css/style.css">
+<!--/HEAD-->
+</head>
+<body>
+<!--BODY-->
+<div class="app">
+  <header class="top">
+    <div class="brand"><span class="logo" aria-hidden="true"></span>Tabwerk</div>
+    <input id="docName" class="docname" aria-label="Name der Übungsfolge" maxlength="80">
+    <div class="top-actions">
+      <button class="btn ghost" id="undo" title="Rückgängig (Strg+Z)" aria-label="Rückgängig">↶</button>
+      <button class="btn ghost" id="redo" title="Wiederholen (Strg+Y)" aria-label="Wiederholen">↷</button>
+      <button class="btn" id="libBtn">Bibliothek</button>
+      <div class="menu" id="exportMenu">
+        <button class="btn" id="exportBtn" aria-haspopup="true" aria-expanded="false">Datei ▾</button>
+        <div class="menu-list" id="exportList" hidden>
+          <button data-act="musicxml">Für Guitar Pro speichern (MusicXML)</button>
+          <button data-act="json">Folge als Datei speichern (.json)</button>
+          <button data-act="libjson">Ganze Bibliothek speichern (.json)</button>
+          <button data-act="import">Datei importieren …</button>
+          <button data-act="copyxml">MusicXML in die Zwischenablage</button>
+        </div>
+      </div>
+      <button class="btn ghost" id="themeBtn" title="Hell / Dunkel" aria-label="Farbschema wechseln">◐</button>
+      <input type="file" id="importFile" accept=".json,application/json" hidden>
+    </div>
+  </header>
+
+  <main class="work">
+    <section class="col-blocks" aria-label="Bausteine">
+      <div class="col-head"><h2>Bausteine</h2><span class="muted" id="blockCount"></span></div>
+      <ol class="blocks" id="blocks"></ol>
+      <div class="add">
+        <span class="label">Hinzufügen</span>
+        <div class="add-grid" id="addGrid">
+          <button class="btn add-btn" data-kind="exercise"><b>Übung</b><small>Dreier, Vierer, Terzen …</small></button>
+          <button class="btn add-btn" data-kind="scale"><b>Skala</b><small>ganz oder Ausschnitt</small></button>
+          <button class="btn add-btn" data-kind="chord"><b>Akkord</b><small>Arpeggio, frei wählbar</small></button>
+          <button class="btn add-btn" data-kind="prog"><b>Akkordfolge</b><small>nach Stufen</small></button>
+          <button class="btn add-btn" data-kind="free"><b>Freie Tonfolge</b><small>per Griffbrett</small></button>
+        </div>
+      </div>
+    </section>
+
+    <section class="col-insp" aria-label="Einstellungen">
+      <div id="inspector" class="inspector"></div>
+    </section>
+  </main>
+
+  <section class="sheet-area" aria-label="Tabulatur">
+    <div class="col-head"><h2>Tabulatur</h2><span class="muted" id="sheetInfo"></span></div>
+    <div id="sheet"></div>
+  </section>
+</div>
+
+<div class="lib" id="lib" hidden>
+  <div class="lib-panel" role="dialog" aria-modal="true" aria-labelledby="libTitle">
+    <div class="lib-head"><h2 id="libTitle">Bibliothek</h2><button class="btn ghost" id="libClose" aria-label="Schließen">✕</button></div>
+    <p class="muted small">Gespeichert in diesem Browser. Für Sicherungen und andere Geräte über „Datei“ als .json speichern.</p>
+    <div class="lib-actions"><button class="btn primary" id="libNew">Neue Folge</button><button class="btn" id="libExample">Beispiel hinzufügen</button></div>
+    <ul class="lib-list" id="libList"></ul>
+  </div>
+</div>
+
+<footer class="dock">
+  <div class="dock-in">
+    <button class="btn primary play" id="play">▶ Alles abspielen</button>
+    <button class="btn" id="playBlock">▶ Baustein</button>
+    <div class="tempo"><label for="bpm">♩ =</label><input type="range" id="bpm" min="30" max="240" step="1"><output id="bpmOut" for="bpm"></output></div>
+    <label class="tg"><input type="checkbox" id="metro" checked> Metronom</label>
+    <label class="tg"><input type="checkbox" id="loop"> Schleife</label>
+    <label class="tg"><input type="checkbox" id="follow" checked> mitscrollen</label>
+    <span class="status" id="status" role="status" aria-live="polite"></span>
+  </div>
+</footer>
+<!--/BODY-->
+<!--SCRIPTS-->
+<script src="js/theory.js"></script>
+<script src="js/model.js"></script>
+<script src="js/musicxml.js"></script>
+<script src="js/examples.js"></script>
+<script src="js/audio.js"></script>
+<script src="js/render.js"></script>
+<script src="js/ui.js"></script>
+<!--/SCRIPTS-->
+</body>
+</html>

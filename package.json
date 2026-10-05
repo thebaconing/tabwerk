@@ -1,0 +1,12 @@
+{
+  "name": "tabwerk",
+  "version": "1.0.0",
+  "description": "Editor für Gitarrenübungen: Übungen, Skalen, Arpeggien, Akkordfolgen und freie Tonfolgen aneinanderreihen, abspielen und als MusicXML für Guitar Pro exportieren.",
+  "private": true,
+  "scripts": {
+    "test": "node tests/run.js",
+    "build": "node tools/build.js",
+    "start": "npx --yes serve ."
+  },
+  "license": "UNLICENSED"
+}
