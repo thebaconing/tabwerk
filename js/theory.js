@@ -15,7 +15,7 @@ const TYPES = {
 };
 // Grundtöne je Tongeschlecht mit Vorzeichenzahl (fifths)
 const ROOTS = {
-  major: [['C', 0], ['G', 1], ['D', 2], ['A', 3], ['E', 4], ['B', 5], ['F#', 6], ['F', -1], ['Bb', -2], ['Eb', -3], ['Ab', -4], ['Db', -5]],
+  major: [['C', 0], ['G', 1], ['D', 2], ['A', 3], ['E', 4], ['B', 5], ['F#', 6], ['F', -1], ['Bb', -2], ['Eb', -3], ['Ab', -4], ['Db', -5], ['Gb', -6]],
   minor: [['A', 0], ['E', 1], ['B', 2], ['F#', 3], ['C#', 4], ['G#', 5], ['D#', 6], ['D', -1], ['G', -2], ['C', -3], ['F', -4], ['Bb', -5], ['Eb', -6]]
 };
 // Freie Akkord-Grundtöne

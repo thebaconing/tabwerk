@@ -1,6 +1,6 @@
 // Lädt die Browser-Skripte in einen gemeinsamen Kontext für Node-Tests.
 const fs = require('fs'), path = require('path'), vm = require('vm');
-module.exports = function load(files = ['theory.js', 'model.js', 'musicxml.js', 'examples.js']) {
+module.exports = function load(files = ['theory.js', 'model.js', 'harmony.js', 'musicxml.js', 'examples.js']) {
   const ctx = vm.createContext({ console, TextEncoder, Date, Math, JSON });
   const src = files.map(f => fs.readFileSync(path.join(__dirname, '..', 'js', f), 'utf8')).join('\n;\n');
   // const/function-Deklarationen sichtbar machen

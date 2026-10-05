@@ -216,5 +216,40 @@ for (const time of T.TIMES) {
   ok(n.length === 3 && n[0].pos[0].f === 3 && n[1].pos.length === 1 && !n[1].dur && n[2].dur === 'h', 'Import: Töne bereinigt ' + JSON.stringify(n));
 }
 
+// --- Tonart des Stücks ---
+{
+  const C = { root: 'C', mode: 'major' }, Am = { root: 'A', mode: 'minor' }, Em = { root: 'E', mode: 'minor' };
+  ok(T.relativeOf(C).root === 'A' && T.relativeOf(Em).root === 'G', 'Paralleltonart');
+  ok(T.chordFit('D', 'm7', C).level === 'fit' && T.chordFit('D', 'm7', C).text.includes('ii7'), 'Dm7 in C ist ii7');
+  ok(T.chordFit('E', '7', C).level === 'related' && /Am/.test(T.chordFit('E', '7', C).text), 'E7 in C ist Zwischendominante zu Am');
+  ok(T.chordFit('E', '7', Am).level === 'related' && /harmonisch/.test(T.chordFit('E', '7', Am).text), 'E7 in a-Moll: Dominante harmonisch Moll');
+  ok(T.chordFit('Eb', 'maj', C).level === 'outside', 'Es-Dur passt nicht zu C-Dur');
+  ok(T.chordFit('Gb', 'maj', C).level === 'outside' && T.chordFit('F#', 'dim', C).level === 'outside', 'Enharmonik / fremde Akkorde');
+  ok(T.chordFit('Gb', '7', Em).level === 'outside', 'Gb7 in e-Moll nicht als Zwischendominante');
+  ok(T.scaleLevel('A', 'minor', 'penta', Em) === 'fit' && T.scaleLevel('E', 'minor', 'blues', Em) === 'related' && T.scaleLevel('E', 'major', 'scale', Em) === 'outside', 'Leitern gegen Tonart');
+  // alle leitereigenen Akkorde aller Tonarten passen, Vorschläge mit Stufe „passt“ passen wirklich
+  for (const mode of ['major', 'minor']) for (const [root] of T.ROOTS[mode]) {
+    const key = { root, mode };
+    for (let d = 0; d < 7; d++) for (const sev of [false, true]) { const c = T.diatonicChord(root, mode, d, sev); ok(T.chordFit(c.root, c.quality, key).level === 'fit', `${root} ${mode}: Stufe ${d} passt nicht`); }
+    const sugg = T.suggestions(key, { seventh: true, prev: { root, quality: 'maj' } });
+    sugg.forEach(sg => {
+      const b = sg.make();
+      const B = T.computeDoc({ time: '4/4', key, blocks: [b] })[0];
+      const f = T.blockFit(B, key);
+      ok(f && f.level === sg.level, `Vorschlag ${sg.label} (${root} ${mode}): erwartet ${sg.level}, geprüft ${f && f.level} ${f && f.text}`);
+    });
+    // nächster Akkord nach V führt zur I bzw. i
+    const v = T.diatonicChord(root, mode, 4, false), n = T.nextChords({ root: v.root, quality: v.quality }, key, false);
+    ok(n[0] && n[0].deg === 0, `${root} ${mode}: nach V nicht zuerst I`);
+  }
+  // Akkord erkennen und Akkord vor einer Stelle
+  ok(T.identifyChord([45, 52, 57, 60, 64]).name === 'Am', 'Am erkannt');
+  ok(T.identifyChord([43, 47, 50, 53]).name === 'G7', 'G7 erkannt');
+  const d = { time: '4/4', key: C, blocks: [Object.assign(T.newBlock('chord'), { root: 'G', quality: '7' }), T.newBlock('free')] };
+  d.blocks[1].notes = [{ pos: [{ s: 4, f: 1 }] }, { pos: T.chordVoicing('A', 'min', 0) }, { pos: [{ s: 5, f: 0 }] }];
+  const comp = T.computeDoc(d);
+  ok(T.chordBefore(comp, 1, 0).name === 'G7' && T.chordBefore(comp, 1, 2).name === 'Am' && T.chordBefore(comp, 1, null).name === 'Am', 'Akkord vor der Stelle');
+}
+
 console.log(`Prüfungen: ${checks}, Fehler: ${errs.length}`);
 if (errs.length) { console.log([...new Set(errs)].slice(0, 40).join('\n')); process.exit(1); }

@@ -37,10 +37,11 @@ function toMusicXML(doc, comp) {
     B.measures.forEach((M, mi) => {
       out += `<measure number="${M.no}">`;
       const key = M.first && M.seg.key ? M.seg.key : null;
-      const fifths = key ? fifthsOf(key.root, key.mode) : (first ? 0 : null);
+      const dk = doc.key || null;
+      const fifths = key ? fifthsOf(key.root, key.mode) : (first ? (dk ? fifthsOf(dk.root, dk.mode) : 0) : null);
       if (first) {
         curFifths = fifths;
-        out += `<attributes><divisions>${DIV}</divisions><key><fifths>${fifths}</fifths>${key ? `<mode>${key.mode}</mode>` : ''}</key><time><beats>${meter.beats}</beats><beat-type>${meter.type}</beat-type></time>` +
+        out += `<attributes><divisions>${DIV}</divisions><key><fifths>${fifths}</fifths>${key || dk ? `<mode>${(key || dk).mode}</mode>` : ''}</key><time><beats>${meter.beats}</beats><beat-type>${meter.type}</beat-type></time>` +
           `<clef><sign>G</sign><line>2</line><clef-octave-change>-1</clef-octave-change></clef><staff-details><staff-lines>6</staff-lines>` +
           [['E', 2], ['A', 2], ['D', 3], ['G', 3], ['B', 3], ['E', 4]].map((t, i) => `<staff-tuning line="${i + 1}"><tuning-step>${t[0]}</tuning-step><tuning-octave>${t[1]}</tuning-octave></staff-tuning>`).join('') +
           `</staff-details><transpose><diatonic>0</diatonic><chromatic>0</chromatic><octave-change>-1</octave-change></transpose></attributes>`;

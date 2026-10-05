@@ -94,7 +94,7 @@ function newBlock(kind, from) {
   throw new Error('Unbekannter Baustein ' + kind);
 }
 function newDoc(name) {
-  return { id: uid(), name: name || 'Neue Übungsfolge', bpm: 80, time: '4/4', blocks: [], updated: Date.now() };
+  return { id: uid(), name: name || 'Neue Übungsfolge', bpm: 80, time: '4/4', key: null, blocks: [], updated: Date.now() };
 }
 
 // ---------- Lagen und Tonvorrat ----------
@@ -421,6 +421,8 @@ function sanitizeDoc(d) {
   const doc = Object.assign(newDoc(), d);
   doc.bpm = Math.max(30, Math.min(240, +doc.bpm || 80));
   if (!TIMES.includes(doc.time)) doc.time = '4/4';
+  if (!doc.key || !ROOTS[doc.key.mode] || !ROOTS[doc.key.mode].some(r => r[0] === doc.key.root)) doc.key = null;
+  else doc.key = { root: doc.key.root, mode: doc.key.mode };
   doc.blocks = d.blocks.filter(b => b && KINDS[b.kind]).map(b => {
     const n = Object.assign(newBlock(b.kind), b);
     n.id = typeof b.id === 'string' ? b.id : uid();

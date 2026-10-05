@@ -26,6 +26,14 @@ Jeder Baustein hat einen eigenen Notenwert (Viertel, Achtel, Achteltriolen, Sech
 - Akkorde: „Akkord stapeln“ legt Töne übereinander, „Akkordgriff einfügen“ setzt einen fertigen Griff (Grundton, Akkordart, Lage).
 - Einen erzeugten Baustein in eine freie Tonfolge umwandeln, um jeden Ton direkt zu ändern.
 
+**Tonart des Stücks:** oben wählen (alle Dur- und Molltonarten). Dann gilt:
+
+- Vorschläge passend zur Tonart: Skalen und Übungen (Tonart, Paralleltonart, Pentatonik, Blues), leitereigene Akkorde mit Stufe, Akkordfolgen, und der nächste Akkord nach dem vorherigen (übliche Fortsetzungen nach Funktionsharmonik zuerst).
+- Umschalter „Passende zuerst“ / „Nur passende“: wirkt auf Vorschläge und Auswahllisten. „Nur passende“ blendet Unpassendes aus, verwandte Bausteine (Blue Note, Zwischendominante, Dominante aus harmonisch Moll, Blues-Septakkorde) bleiben sichtbar und sind markiert.
+- Jeder Baustein bekommt eine Kennzeichnung: passt, verwandt oder passt nicht, mit Begründung.
+- Leiterfremde Töne sind in der Tabulatur rot unterstrichen, Blue Notes gestrichelt.
+- In freien Tonfolgen sind die Töne des Akkords davor im Griffbrett hervorgehoben.
+
 **Taktart** pro Folge: 4/4, 3/4, 2/4, 5/4, 6/8, 12/8. Ein Ton, der nicht mehr in den Takt passt, beginnt im nächsten Takt (Haltebögen gibt es noch nicht).
 
 ## Bedienung
@@ -61,7 +69,7 @@ Erzeugt `dist/tabwerk.html` mit allem eingebettet und `dist/artifact.html` für 
 npm test
 ```
 
-Prüft Akkordgriffe, alle Taktarten, gemischte Notenlängen, Kopieren/Einfügen, Zusammenführen, alle Leitern, Tonarten, Lagen und Muster, alle Akkordtypen in mehreren Lagen, alle Vorlagen für Akkordfolgen, Reihen (Tonarten, Lagen, Oktaven), Techniken, das Umwandeln in freie Tonfolgen, den Import und bei jedem Baustein: 4/4-Takte, Bund passt zum Ton, Schreibweise passt zum Ton, MusicXML-Tonhöhe passt zu Saite und Bund.
+Prüft die Tonart-Logik (leitereigene Akkorde aller Tonarten, Zwischendominanten, jeder Vorschlag besteht die eigene Prüfung, nach V folgt zuerst I), Akkordgriffe, alle Taktarten, gemischte Notenlängen, Kopieren/Einfügen, Zusammenführen, alle Leitern, Tonarten, Lagen und Muster, alle Akkordtypen in mehreren Lagen, alle Vorlagen für Akkordfolgen, Reihen (Tonarten, Lagen, Oktaven), Techniken, das Umwandeln in freie Tonfolgen, den Import und bei jedem Baustein: 4/4-Takte, Bund passt zum Ton, Schreibweise passt zum Ton, MusicXML-Tonhöhe passt zu Saite und Bund.
 
 ## Aufbau
 
@@ -70,6 +78,7 @@ index.html        Seite
 css/style.css     Gestaltung (Farbschema Smaragd, dunkel als Standard)
 js/theory.js      Leitern, Akkorde, Schreibweise, Fingersätze
 js/model.js       Bausteine, Reihen, Takte
+js/harmony.js     Tonart des Stücks: Prüfung, Vorschläge, nächster Akkord
 js/musicxml.js    MusicXML- und ZIP-Export
 js/audio.js       Wiedergabe mit Gitarrenklang, Metronom, Techniken
 js/render.js      Griffbrett und Tabulatur als SVG

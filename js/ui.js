@@ -23,7 +23,7 @@ let comp = [];
 let sel = { bi: doc.blocks.length ? 0 : null, fi: null, fi2: null, k: null, k2: null };
 let hist = { undo: [], redo: [], last: null };
 const ui = { mode: 'after', dur: null, markStart: null, libConfirm: null, userScrollUntil: 0, multi: new Set(), chord: { root: 'A', q: 'min', fret: 0 }, clip: store.get('tabwerk-clip') };
-const prefs = Object.assign({ metro: true, loop: false, follow: true, theme: null }, store.get(PREF_KEY) || {});
+const prefs = Object.assign({ metro: true, loop: false, follow: true, theme: null, keyFilter: 'first', sugTab: 'scale', sugSeventh: false }, store.get(PREF_KEY) || {});
 if (prefs.theme && !document.documentElement.hasAttribute('data-theme')) document.documentElement.setAttribute('data-theme', prefs.theme);
 
 let saveT = 0;
@@ -70,6 +70,7 @@ function refresh(o = {}) {
   if (!o.skipInsp) renderInspector();
   renderSheet();
   $('undo').disabled = !hist.undo.length; $('redo').disabled = !hist.redo.length;
+  renderKeyBar(); renderSugg();
   $('bpm').value = doc.bpm; $('bpmOut').value = doc.bpm;
   $('docTime').value = doc.time || '4/4'; $('bpmLabel').textContent = meterOf(doc.time).compound ? '♩. =' : meterOf(doc.time).type === 8 ? '♪ =' : '♩ =';
   saveSoon();
@@ -92,6 +93,67 @@ function relRoot(root, from, to) {
 function unitOpts(withDefault) { return (withDefault ? [['', 'Standard des Musters']] : []).concat(GEN_UNITS.map(k => [k, UNITS[k].label])); }
 function fmtDate(t) { const d = new Date(t); return d.toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit', year: 'numeric' }) + ', ' + d.toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' }); }
 function slug(t) { return (t || 'tabwerk').normalize('NFKD').replace(/[̀-ͯ]/g, '').replace(/ß/g, 'ss').replace(/[^A-Za-z0-9]+/g, '_').replace(/^_|_$/g, '') || 'tabwerk'; }
+// ---------- Tonart des Stücks ----------
+const LEV_ORDER = { fit: 0, related: 1, outside: 2 };
+function onlyFit() { return !!doc.key && prefs.keyFilter === 'only'; }
+// Auswahllisten: Passendes zuerst und markiert, bei „Nur passende“ Unpassendes ausblenden (aktueller Wert bleibt)
+function markOpts(opts, levelOf, curVal) {
+  if (!doc.key) return opts;
+  let list = opts.map(([v, l]) => ({ v, l, lev: levelOf(v) || 'fit' }));
+  list = list.map((x, i) => Object.assign(x, { i })).sort((a, c) => LEV_ORDER[a.lev] - LEV_ORDER[c.lev] || a.i - c.i);
+  if (onlyFit()) list = list.filter(x => x.lev !== 'outside' || String(x.v) === String(curVal));
+  return list.map(x => [x.v, x.l + (x.lev === 'fit' ? ' ✓' : x.lev === 'related' ? ' (verwandt)' : ' (passt nicht)')]);
+}
+function fitPill(f) { return f ? `<span class="fit fit-${f.level}" title="${h(f.text)}">${LEVEL_TEXT[f.level]}</span>` : ''; }
+function keyOptsHTML() {
+  const o = ['<option value="">keine</option>'];
+  ['major', 'minor'].forEach(m => { o.push(`<optgroup label="${m === 'major' ? 'Dur' : 'Moll'}">`); ROOTS[m].slice().sort((a, c) => a[1] - c[1]).forEach(([r]) => o.push(`<option value="${r}|${m}">${h(keyName(r, m))}</option>`)); o.push('</optgroup>'); });
+  return o.join('');
+}
+function renderKeyBar() {
+  const sel2 = $('docKey');
+  if (!sel2.options.length) sel2.innerHTML = keyOptsHTML();
+  sel2.value = doc.key ? `${doc.key.root}|${doc.key.mode}` : '';
+  $('keyFilter').hidden = !doc.key;
+  $('keyFilter').querySelectorAll('button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.v === prefs.keyFilter)));
+}
+function renderSugg() {
+  const el = $('sugg');
+  if (!doc.key) { el.innerHTML = '<p class="hint small">Tonart oben wählen, dann erscheinen hier passende Skalen, Akkorde und Akkordfolgen.</p>'; $('addLabel').textContent = 'Hinzufügen'; return; }
+  $('addLabel').textContent = onlyFit() ? `Frei hinzufügen (startet in ${keyLabel(doc.key)})` : 'Frei hinzufügen';
+  const prev = chordBefore(comp, sel.bi == null ? comp.length - 1 : sel.bi, null);
+  const all = suggestions(doc.key, { seventh: prefs.sugSeventh, prev });
+  const tabs = [['next', 'Nächster Akkord'], ['scale', 'Skalen & Übungen'], ['chord', 'Akkorde'], ['prog', 'Folgen']];
+  if (prefs.sugTab === 'next' && !prev) prefs.sugTab = 'chord';
+  let items = all.filter(x => x.group === prefs.sugTab).map((x, i) => Object.assign(x, { idx: all.indexOf(x) }));
+  items.sort((a, c) => LEV_ORDER[a.level] - LEV_ORDER[c.level]);
+  if (onlyFit()) items = items.filter(x => x.level !== 'outside');
+  ui.sugAll = all;
+  const nextNote = prefs.sugTab === 'next' ? (prev ? `<p class="hint small">Nach ${h(prev.name)} (Baustein ${prev.from + 1}) in ${h(keyLabel(doc.key))}, übliche Fortsetzungen zuerst.</p>` : '<p class="hint small">Noch kein Akkord davor. Erst einen Akkord oder eine Akkordfolge einfügen.</p>') : '';
+  el.innerHTML = `<span class="label">Vorschläge für ${h(keyLabel(doc.key))}</span>
+    ${segHTML('sugTab', tabs.map(([v, l]) => [v, l, v === 'next' && !prev]), prefs.sugTab)}
+    ${['chord', 'prog', 'next'].includes(prefs.sugTab) ? segHTML('sugSeventh', [['false', 'Dreiklänge'], ['true', 'Vierklänge']], String(prefs.sugSeventh)) : ''}
+    ${nextNote}
+    <div class="sugg-list">${items.map(x => `<button type="button" class="btn sug lev-${x.level}" data-sug="${x.idx}"><b>${h(x.label)}</b><small>${h(x.sub)}</small>${fitPill({ level: x.level, text: x.sub })}</button>`).join('') || '<span class="hint small">Keine Vorschläge.</span>'}</div>`;
+}
+$('sugg').addEventListener('click', e => {
+  const sb = e.target.closest('.seg button');
+  if (sb) { const k = sb.parentElement.dataset.seg; if (k === 'sugTab') prefs.sugTab = sb.dataset.v; if (k === 'sugSeventh') prefs.sugSeventh = sb.dataset.v === 'true'; savePrefs(); renderSugg(); return; }
+  const it = e.target.closest('[data-sug]'); if (!it) return;
+  const sug = ui.sugAll[+it.dataset.sug]; if (!sug) return;
+  const nb = sug.make();
+  const at = sel.bi == null ? doc.blocks.length : sel.bi + 1;
+  commit(d => d.blocks.splice(at, 0, nb));
+  sel = { bi: at, fi: null, fi2: null, k: null, k2: null }; refresh();
+  status(`${sug.label} hinzugefügt (${sug.sub}).`);
+});
+$('docKey').addEventListener('change', e => {
+  const v = e.target.value;
+  commit(d => { d.key = v ? { root: v.split('|')[0], mode: v.split('|')[1] } : null; });
+  status(v ? `Tonart ${keyLabel(doc.key)}: Bausteine werden geprüft, leiterfremde Töne markiert.` : 'Keine Tonart gesetzt.');
+});
+$('keyFilter').addEventListener('click', e => { const b = e.target.closest('button'); if (!b) return; prefs.keyFilter = b.dataset.v; savePrefs(); refresh(); });
+
 function clearSel() { sel.fi = null; sel.fi2 = null; sel.k = null; sel.k2 = null; }
 function evByK(k) { for (const B of comp) for (const M of B.measures) for (const e of M.events) if (e.k === k) return { B, e }; return null; }
 function noteLabel(e) { return `${STR_NAMES[e.s]}-Saite, Bund ${e.f} (${deNote(e.sp.letter, e.sp.alter)})`; }
@@ -109,7 +171,7 @@ function renderBlocks() {
   if (!doc.blocks.length) { ol.innerHTML = '<li class="empty">Noch keine Bausteine. Füge unten den ersten hinzu.</li>'; return; }
   ol.innerHTML = comp.map((B, i) => `<li class="blk${i === sel.bi ? ' sel' : ''}${ui.multi.has(B.block.id) ? ' multi' : ''}" data-bi="${i}" draggable="true" tabindex="0" aria-label="Baustein ${i + 1}: ${h(blockTitle(B.block))}">
     <span class="handle" title="Ziehen zum Verschieben" aria-hidden="true">⋮⋮</span>
-    <div class="blk-main"><div class="kind">${i + 1} · ${KINDS[B.block.kind]}</div><div class="blk-title">${h(blockTitle(B.block))}</div><div class="blk-meta">${blockMeta(B).map(x => `<span>${h(x)}</span>`).join('')}</div></div>
+    <div class="blk-main"><div class="kind">${i + 1} · ${KINDS[B.block.kind]}</div><div class="blk-title">${h(blockTitle(B.block))}</div><div class="blk-meta">${blockMeta(B).map(x => `<span>${h(x)}</span>`).join('')}${fitPill(blockFit(B, doc.key))}</div></div>
     <div class="blk-tools">
       <button class="btn ghost" data-act="up" title="Nach oben" aria-label="Nach oben"${i === 0 ? ' disabled' : ''}>↑</button>
       <button class="btn ghost" data-act="down" title="Nach unten" aria-label="Nach unten"${i === doc.blocks.length - 1 ? ' disabled' : ''}>↓</button>
@@ -125,7 +187,7 @@ function renderMulti() {
 function selectBlock(i, scroll) {
   if (sel.bi === i) return;
   sel = { bi: i, fi: null, fi2: null, k: null, k2: null }; ui.markStart = null;
-  renderBlocks(); renderInspector(); markSheetSel();
+  renderBlocks(); renderInspector(); markSheetSel(); renderSugg();
   if (scroll) { const el = document.querySelector(`.tb[data-bi="${i}"]`); if (el) el.scrollIntoView({ block: 'nearest', behavior: reduced() ? 'auto' : 'smooth' }); }
 }
 function moveBlock(from, to) {
@@ -199,7 +261,13 @@ $('addGrid').addEventListener('click', e => {
   const b = e.target.closest('[data-kind]'); if (!b) return;
   const prev = cur();
   const like = prev && (prev.type || prev.ref) ? { type: prev.type || (prev.ref && prev.ref.type), mode: prev.mode || (prev.ref && prev.ref.mode), root: prev.root && ROOTS[prev.mode || 'minor'] ? prev.root : (prev.ref && prev.ref.root) } : null;
-  const nb = newBlock(b.dataset.kind, like && like.mode && ROOTS[like.mode].some(r => r[0] === like.root) ? like : null);
+  let nb;
+  if (onlyFit()) {
+    const K = { type: 'scale', root: doc.key.root, mode: doc.key.mode };
+    nb = newBlock(b.dataset.kind, K);
+    if (nb.kind === 'chord') { const c = diatonicChord(K.root, K.mode, 0, false); Object.assign(nb, { root: c.root, quality: c.quality, fret: bestChordFret(c.root, c.quality) }); }
+    if (nb.kind === 'prog') nb.mode = K.mode;
+  } else nb = newBlock(b.dataset.kind, like && like.mode && ROOTS[like.mode].some(r => r[0] === like.root) ? like : null);
   const at = sel.bi == null ? doc.blocks.length : sel.bi + 1;
   commit(d => d.blocks.splice(at, 0, nb));
   sel = { bi: at, fi: null, fi2: null, k: null, k2: null }; refresh();
@@ -215,6 +283,8 @@ function renderInspector() {
   let html = `<div class="insp-head"><span class="kind">${KINDS[b.kind]}</span><input type="text" class="title-in" id="f-title" placeholder="${h(blockTitle(Object.assign({}, b, { title: '' })))}" value="${h(b.title || '')}" aria-label="Titel des Bausteins" maxlength="80"></div>`;
   if (B.err) html += `<div class="warn">Dieser Baustein lässt sich nicht berechnen: ${h(B.err)}</div>`;
   if (B.warn.length) html += `<div class="warn">${B.warn.map(h).join('<br>')}</div>`;
+  const fit = blockFit(B, doc.key);
+  if (fit) html += `<div class="fit-line">${fitPill(fit)}<span>${h(fit.text)}</span></div>`;
   const kindHTML = { exercise: inspExercise, scale: inspScale, chord: inspChord, prog: inspProg, free: inspFree }[b.kind](b, B);
   html += kindHTML;
   html += inspSeries(b);
@@ -223,7 +293,7 @@ function renderInspector() {
 function keyControls(b) {
   return ctl('Leiter', segHTML('type', [['scale', 'Tonleiter'], ['penta', 'Pentatonik'], ['blues', 'Blues']], b.type)) +
     ctl('Tongeschlecht', segHTML('mode', [['minor', 'Moll'], ['major', 'Dur']], b.mode)) +
-    ctl('Grundton', selHTML('root', rootOpts(b.mode), b.root)) +
+    ctl('Grundton', selHTML('root', markOpts(rootOpts(b.mode), r => scaleLevel(r, b.mode, b.type, doc.key), b.root), b.root)) +
     ctl('Fingersatz', segHTML('system', [['pos', 'Lage'], ['nps', b.type === 'scale' ? '3 pro Saite' : b.type === 'penta' ? 'Boxen' : 'Boxen + Blue Note']], b.system));
 }
 function shapeOpts(b) {
@@ -276,8 +346,8 @@ function inspChord(b) {
   const { set, shape } = blockShape(b);
   const idx = new Set(arpeggioIdx(set, shape.notes, b.range, b.pattern, 'once', b.unit));
   return `<div class="grid">
-    ${ctl('Grundton', selHTML('root', CHORD_ROOTS.map(r => [r, deName(r)]), b.root))}
-    ${ctl('Akkord', selHTML('quality', Object.entries(CHORDS).map(([k, c]) => [k, `${deName(b.root)}${c.sym} · ${c.label}`]), b.quality))}
+    ${ctl('Grundton', selHTML('root', markOpts(CHORD_ROOTS.map(r => [r, deName(r) + (doc.key && chordDegree(r, doc.key) >= 0 ? ' · ' + romanOf(chordDegree(r, doc.key), diatonicChord(doc.key.root, doc.key.mode, chordDegree(r, doc.key), false).quality) : '')]), r => chordRootLevel(r, doc.key), b.root), b.root))}
+    ${ctl('Akkord', selHTML('quality', markOpts(Object.entries(CHORDS).map(([k, c]) => [k, `${deName(b.root)}${c.sym} · ${c.label}`]), q => doc.key ? chordFit(b.root, q, doc.key).level : null, b.quality), b.quality))}
     ${chordControls(b)}
   </div>${chordBoard(set, shape.notes, b.fret, i => idx.has(i))}
   <p class="hint">Töne: ${set.map(t => deNote(t.letter, t.alter)).join(' · ')}</p>`;
@@ -296,12 +366,12 @@ function inspProg(b) {
   if (first) { const set = buildChord(first.root, first.quality), notes = shapePosition(set, b.fret); board = chordBoard(set, notes, b.fret, () => true) + `<p class="hint">Griffbild: ${h(chordName(first.root, first.quality))}, der erste Akkord in dieser Lage.</p>`; }
   return `<div class="grid">
     ${ctl('Tongeschlecht', segHTML('mode', [['major', 'Dur'], ['minor', 'Moll']], b.mode))}
-    ${ctl('Tonart', selHTML('root', rootOpts(b.mode), b.root))}
+    ${ctl('Tonart', selHTML('root', markOpts(rootOpts(b.mode), r => scaleLevel(r, b.mode, 'scale', doc.key), b.root), b.root))}
     ${ctl('Akkordart', segHTML('seventh', [[false, 'Dreiklänge'], [true, 'Vierklänge']], b.seventh))}
     ${ctl('Vorlage', `<select id="f-preset" data-do-change="preset"><option value="">Vorlage wählen …</option>${PROG_PRESETS.map(p => `<option value="${p.id}">${h(p.label)}</option>`).join('')}</select>`)}
     ${ctl('Akkorde <em>(Stufe · Art)</em>', `<div class="prog-chords">${b.chords.map((c, i) => `<div class="pc"><b>${h(chordName(chords[i].root, chords[i].quality))}</b>
         <select data-pc="${i}" data-pk="deg" aria-label="Stufe von Akkord ${i + 1}">${degOpts.map(([v, l]) => `<option value="${v}"${v === c.deg ? ' selected' : ''}>${h(l)}</option>`).join('')}</select>
-        <select data-pc="${i}" data-pk="q" aria-label="Art von Akkord ${i + 1}">${qOpts.map(([v, l]) => `<option value="${v}"${v === c.q ? ' selected' : ''}>${h(l)}</option>`).join('')}</select>
+        <select data-pc="${i}" data-pk="q" aria-label="Art von Akkord ${i + 1}">${markOpts(qOpts, q => { if (!doc.key) return null; const r = q === 'auto' ? diatonicChord(b.root, b.mode, c.deg, b.seventh) : { root: nameOf(sc[c.deg].letter, sc[c.deg].alter), quality: q }; return chordFit(r.root, r.quality, doc.key).level; }, c.q).map(([v, l]) => `<option value="${v}"${v === c.q ? ' selected' : ''}>${h(l)}</option>`).join('')}</select>
         <button class="btn ghost sm" data-pcdel="${i}" aria-label="Akkord ${i + 1} entfernen">✕</button></div>`).join('')}
       <button class="btn sm" data-do="pcAdd">+ Akkord</button></div>`, 'wide')}
     ${chordControls(b)}
@@ -315,8 +385,10 @@ function freeRange() {
 }
 function inspFree(b, B) {
   const ref = b.ref;
-  const set = ref ? buildScale(ref.root, ref.mode, ref.type) : null;
+  const set = ref ? buildScale(ref.root, ref.mode, ref.type) : keyScale(doc.key);
   const r = freeRange();
+  const ctxChord = chordBefore(comp, sel.bi, r ? r[1] : null);
+  const ctxPcs = ctxChord ? new Set(ctxChord.pcs) : null;
   const n = r ? b.notes[sel.fi] : null;
   const pos = n && !n.rest ? notePos(n) : [];
   const single = pos.length === 1;
@@ -325,7 +397,8 @@ function inspFree(b, B) {
   const notes = B.measures.flatMap(m => m.events).filter(e => e.kind === 'note');
   const hi = Math.max(15, ...notes.flatMap(e => evFrets(e).map(f => f + 1)));
   const dots = [];
-  if (set) for (let s2 = 0; s2 < 6; s2++) for (let f = 0; f <= hi; f++) { const d = degreeOf(set, OPEN[s2] + f); if (d >= 0 && !pos.some(p => p.s === s2 && p.f === f)) dots.push({ s: s2, f, cls: 'ghost', label: deNote(set[d].letter, set[d].alter), blue: set[d].blue }); }
+  if (set) for (let s2 = 0; s2 < 6; s2++) for (let f = 0; f <= hi; f++) { const d = degreeOf(set, OPEN[s2] + f); if (d >= 0 && !pos.some(p => p.s === s2 && p.f === f)) dots.push({ s: s2, f, cls: ctxPcs && ctxPcs.has(set[d].pc) ? 'chordtone' : 'ghost', label: deNote(set[d].letter, set[d].alter), blue: set[d].blue }); }
+  if (ctxPcs && set) for (let s2 = 0; s2 < 6; s2++) for (let f = 0; f <= hi; f++) { const m2 = OPEN[s2] + f; if (ctxPcs.has(mod12(m2)) && degreeOf(set, m2) < 0 && !pos.some(p => p.s === s2 && p.f === f)) { const sp = spellMidi(m2, null, doc.key ? fifthsOf(doc.key.root, doc.key.mode) : 0); dots.push({ s: s2, f, cls: 'chordtone', label: deNote(sp.letter, sp.alter) }); } }
   pos.forEach(p => { const sp = spellMidi(OPEN[p.s] + p.f, set, ref ? fifthsOf(ref.root, ref.mode) : 0); dots.push({ s: p.s, f: p.f, cls: 'on-root', label: deNote(sp.letter, sp.alter), end: true }); });
   const cnt = r ? r[1] - r[0] + 1 : 0;
   const selTxt = !r ? 'Nichts ausgewählt: neue Töne kommen ans Ende.' : cnt > 1 ? `${cnt} Einträge markiert (${r[0] + 1} bis ${r[1] + 1}).` : n.rest ? `Pause ${r[0] + 1} ausgewählt.` : pos.length > 1 ? `Akkord ${r[0] + 1} ausgewählt: ${pos.length} Töne.` : `Ton ${r[0] + 1} ausgewählt: ${STR_NAMES[pos[0].s]}-Saite, Bund ${pos[0].f}.`;
@@ -333,13 +406,13 @@ function inspFree(b, B) {
   const C = ui.chord;
   return `<div class="grid">
     ${ctl('Bezugsleiter', selHTML('reftype', [['none', 'keine'], ['scale', 'Tonleiter'], ['penta', 'Pentatonik'], ['blues', 'Blues']], ref ? ref.type : 'none'))}
-    ${ref ? ctl('Tongeschlecht', segHTML('refmode', [['minor', 'Moll'], ['major', 'Dur']], ref.mode)) + ctl('Grundton', selHTML('refroot', rootOpts(ref.mode), ref.root)) : ''}
+    ${ref ? ctl('Tongeschlecht', segHTML('refmode', [['minor', 'Moll'], ['major', 'Dur']], ref.mode)) + ctl('Grundton', selHTML('refroot', markOpts(rootOpts(ref.mode), r => scaleLevel(r, ref.mode, ref.type, doc.key), ref.root), ref.root)) : ''}
   </div>
   <div class="grid">
     ${ctl(`Länge${r ? ' <em>(gilt für die Auswahl)</em>' : ' <em>(für neue Töne)</em>'}`, `<div class="chips" role="group" aria-label="Notenlänge">${FREE_UNITS.map(k => `<button type="button" class="chip" data-dur="${k}" aria-pressed="${k === curDur}">${DUR_LABEL[k]}</button>`).join('')}</div>`, 'wide')}
     ${ctl('Klick aufs Griffbrett', segHTML('insmode', [['after', 'Einfügen'], ['replace', 'Ersetzen'], ['stack', 'Akkord stapeln']], ui.mode))}
-    ${ctl('Akkordgriff einfügen', `<div class="toolbar"><select id="chRoot" aria-label="Grundton" style="width:auto">${CHORD_ROOTS.map(x => `<option value="${x}"${x === C.root ? ' selected' : ''}>${deName(x)}</option>`).join('')}</select>
-      <select id="chQ" aria-label="Akkordart" style="width:auto">${Object.entries(CHORDS).map(([k, c]) => `<option value="${k}"${k === C.q ? ' selected' : ''}>${c.sym || 'Dur'}</option>`).join('')}</select>
+    ${ctl('Akkordgriff einfügen', `<div class="toolbar"><select id="chRoot" aria-label="Grundton" style="width:auto">${markOpts(CHORD_ROOTS.map(x => [x, deName(x)]), x => chordRootLevel(x, doc.key), C.root).map(([x, l]) => `<option value="${x}"${x === C.root ? ' selected' : ''}>${h(l)}</option>`).join('')}</select>
+      <select id="chQ" aria-label="Akkordart" style="width:auto">${markOpts(Object.entries(CHORDS).map(([k, c]) => [k, c.sym || 'Dur']), q => doc.key ? chordFit(C.root, q, doc.key).level : null, C.q).map(([k, l]) => `<option value="${k}"${k === C.q ? ' selected' : ''}>${h(l)}</option>`).join('')}</select>
       <select id="chFret" aria-label="Lage" style="width:auto">${Array.from({ length: 13 }, (_, i) => `<option value="${i}"${i === C.fret ? ' selected' : ''}>${i === 0 ? 'offen' : 'Bund ' + i}</option>`).join('')}</select>
       <button class="btn sm" data-do="chordIns">Einfügen</button></div>`, 'wide')}
   </div>
@@ -356,6 +429,7 @@ function inspFree(b, B) {
     <button class="btn sm" data-tech="legato" aria-pressed="${!!tech.legato}"${single ? '' : ' disabled'} title="Bindung zum nächsten Ton: aufwärts Hammer-on, abwärts Pull-off">Hammer-on / Pull-off</button>
     <button class="btn sm" data-tech="slide" aria-pressed="${!!tech.slide}"${single ? '' : ' disabled'} title="Slide zum nächsten Ton">Slide</button>
   </div>
+  ${ctxChord ? `<p class="hint"><span class="fit fit-related">${h(ctxChord.name)}</span> Akkordtöne von ${h(ctxChord.name)} (zuletzt in Baustein ${ctxChord.from + 1}) sind im Griffbrett hervorgehoben${set ? ', die übrigen Leitertöne blass' : ''}.</p>` : ''}
   <p class="hint">${selTxt} ${modeHint} Umschalt-Klick in der Tabulatur markiert einen Bereich. Tastatur: Pfeiltasten wählen (mit Umschalt erweitern), Entf löscht, P setzt eine Pause, Strg+C/X/V kopiert, schneidet aus, fügt ein.</p>
   <div class="fb-wrap" id="board">${renderFretboard({ lo: 0, hi, dots, hit: true, fw: 34 })}</div>`;
 }
@@ -480,6 +554,7 @@ ins.addEventListener('click', e => {
 ins.addEventListener('change', e => {
   const t = e.target;
   if (t.dataset.field) { setField(t.dataset.field, t.value); return; }
+  if (t.id === 'chRoot' || t.id === 'chQ' || t.id === 'chFret') { ui.chord = { root: $('chRoot').value, q: $('chQ').value, fret: +$('chFret').value }; if (t.id === 'chRoot') renderInspector(); return; }
   if (t.dataset.range === 'fret') { setField('fret', t.value); return; }
   if (t.dataset.pc != null) { const i = +t.dataset.pc, k = t.dataset.pk, v = k === 'deg' ? +t.value : t.value; commit(d => { d.blocks[sel.bi].chords[i][k] = v; }); return; }
   if (t.dataset.doChange === 'preset' && t.value) { const p = PROG_PRESETS.find(x => x.id === t.value); commit(d => { const x = d.blocks[sel.bi]; x.chords = p.chords.map(c => Object.assign({}, c)); if (p.id === 'i-iv-v' && x.mode !== 'minor') { x.root = relRoot(x.root, x.mode, 'minor'); x.mode = 'minor'; } }); }
@@ -654,10 +729,11 @@ function renderSheet() {
   const secs = Math.round(totalM * meter.len / meter.beat * 60 / doc.bpm);
   $('sheetInfo').textContent = `${totalM} Takte im ${meter.label} · etwa ${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, '0')} Minuten · Klick wählt einen Ton, Umschalt-Klick einen Bereich`;
   const keys = selKeys();
+  const keyPcs = doc.key ? new Set(keyScale(doc.key).map(t => t.pc)) : null, blue = doc.key ? bluePcs(doc.key) : null;
   el.innerHTML = comp.map((B, i) => {
-    const svgs = B.measures.map((M, mi) => measureSvg(M, B.meter, { sel: keys, firstOfBlock: mi === 0, showTime: M.no === 1, lastOfDoc: i === comp.length - 1 && mi === B.measures.length - 1 })).join('');
+    const svgs = B.measures.map((M, mi) => measureSvg(M, B.meter, { sel: keys, keyPcs, bluePcs: blue, firstOfBlock: mi === 0, showTime: M.no === 1, lastOfDoc: i === comp.length - 1 && mi === B.measures.length - 1 })).join('');
     const ul = B.block.kind === 'free' ? 'eigene Längen' : B.unit.label;
-    return `<div class="tb${i === sel.bi ? ' sel' : ''}" data-bi="${i}"><div class="tb-head" data-head="${i}"><span class="kind">${i + 1} · ${KINDS[B.block.kind]}</span><h3>${h(blockTitle(B.block))}</h3><span class="muted small">${h(ul)}</span>
+    return `<div class="tb${i === sel.bi ? ' sel' : ''}" data-bi="${i}"><div class="tb-head" data-head="${i}"><span class="kind">${i + 1} · ${KINDS[B.block.kind]}</span><h3>${h(blockTitle(B.block))}</h3><span class="muted small">${h(ul)}</span>${fitPill(blockFit(B, doc.key))}
       <button class="btn sm" data-playb="${i}">▶ abspielen</button></div>
       ${selNoteBox(B, i)}<div class="staff">${svgs || '<span class="hint">Noch keine Töne.</span>'}</div></div>`;
   }).join('');
@@ -696,7 +772,7 @@ $('sheet').addEventListener('click', e => {
       const changed = bi !== sel.bi;
       sel = { bi, k, k2: null, fi: r.e.fi != null ? r.e.fi : null, fi2: null }; ui.markStart = null;
       if (r.e.kind === 'note') [r.e].concat(r.e.extra || []).forEach(t => Player.preview(t.m));
-      if (changed) renderBlocks();
+      if (changed) { renderBlocks(); renderSugg(); }
     }
     renderInspector(); markSheetSel();
     return;
