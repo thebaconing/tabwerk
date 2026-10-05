@@ -28,7 +28,7 @@ Jeder Baustein hat einen eigenen Notenwert (Viertel, Achtel, Achteltriolen, Sech
 
 **Tonart des Stücks:** oben wählen (alle Dur- und Molltonarten). Dann gilt:
 
-- Vorschläge passend zur Tonart: Skalen und Übungen (Tonart, Paralleltonart, Pentatonik, Blues), leitereigene Akkorde mit Stufe, Akkordfolgen, und der nächste Akkord nach dem vorherigen (übliche Fortsetzungen nach Funktionsharmonik zuerst).
+- Vorschläge passend zur Tonart (Akkorde wahlweise angeschlagen oder als Arpeggio, angeschlagene Akkorde lassen sich später mit „Als Arpeggio auflösen“ in Einzeltöne zerlegen): Skalen und Übungen (Tonart, Paralleltonart, Pentatonik, Blues), leitereigene Akkorde mit Stufe, Akkordfolgen, und der nächste Akkord nach dem vorherigen (übliche Fortsetzungen nach Funktionsharmonik zuerst).
 - Umschalter „Passende zuerst“ / „Nur passende“: wirkt auf Vorschläge und Auswahllisten. „Nur passende“ blendet Unpassendes aus, verwandte Bausteine (Blue Note, Zwischendominante, Dominante aus harmonisch Moll, Blues-Septakkorde) bleiben sichtbar und sind markiert.
 - Jeder Baustein bekommt eine Kennzeichnung: passt, verwandt oder passt nicht, mit Begründung.
 - Leiterfremde Töne sind in der Tabulatur rot unterstrichen, Blue Notes gestrichelt.

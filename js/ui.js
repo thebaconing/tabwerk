@@ -23,7 +23,7 @@ let comp = [];
 let sel = { bi: doc.blocks.length ? 0 : null, fi: null, fi2: null, k: null, k2: null };
 let hist = { undo: [], redo: [], last: null };
 const ui = { mode: 'after', dur: null, markStart: null, libConfirm: null, userScrollUntil: 0, multi: new Set(), chord: { root: 'A', q: 'min', fret: 0 }, clip: store.get('tabwerk-clip') };
-const prefs = Object.assign({ countin: true, metro: true, loop: false, follow: true, theme: null, keyFilter: 'first', sugTab: 'scale', sugSeventh: false }, store.get(PREF_KEY) || {});
+const prefs = Object.assign({ countin: true, metro: true, loop: false, follow: true, theme: null, keyFilter: 'first', sugTab: 'scale', sugSeventh: false, sugAs: 'chord' }, store.get(PREF_KEY) || {});
 if (prefs.theme && !document.documentElement.hasAttribute('data-theme')) document.documentElement.setAttribute('data-theme', prefs.theme);
 
 let saveT = 0;
@@ -132,16 +132,21 @@ function renderSugg() {
   const nextNote = prefs.sugTab === 'next' ? (prev ? `<p class="hint small">Nach ${h(prev.name)} (Baustein ${prev.from + 1}) in ${h(keyLabel(doc.key))}, übliche Fortsetzungen zuerst.</p>` : '<p class="hint small">Noch kein Akkord davor. Erst einen Akkord oder eine Akkordfolge einfügen.</p>') : '';
   el.innerHTML = `<span class="label">Vorschläge für ${h(keyLabel(doc.key))}</span>
     ${segHTML('sugTab', tabs.map(([v, l]) => [v, l, v === 'next' && !prev]), prefs.sugTab)}
-    ${['chord', 'prog', 'next'].includes(prefs.sugTab) ? segHTML('sugSeventh', [['false', 'Dreiklänge'], ['true', 'Vierklänge']], String(prefs.sugSeventh)) : ''}
+    ${['chord', 'prog', 'next'].includes(prefs.sugTab) ? segHTML('sugSeventh', [['false', 'Dreiklänge'], ['true', 'Vierklänge']], String(prefs.sugSeventh)) + segHTML('sugAs', [['chord', 'Akkord anschlagen'], ['arp', 'als Arpeggio']], prefs.sugAs) : ''}
     ${nextNote}
     <div class="sugg-list">${items.map(x => `<button type="button" class="btn sug lev-${x.level}" data-sug="${x.idx}"><b>${h(x.label)}</b><small>${h(x.sub)}</small>${fitPill({ level: x.level, text: x.sub })}</button>`).join('') || '<span class="hint small">Keine Vorschläge.</span>'}</div>`;
 }
 $('sugg').addEventListener('click', e => {
   const sb = e.target.closest('.seg button');
-  if (sb) { const k = sb.parentElement.dataset.seg; if (k === 'sugTab') prefs.sugTab = sb.dataset.v; if (k === 'sugSeventh') prefs.sugSeventh = sb.dataset.v === 'true'; savePrefs(); renderSugg(); return; }
+  if (sb) { const k = sb.parentElement.dataset.seg; if (k === 'sugTab') prefs.sugTab = sb.dataset.v; if (k === 'sugSeventh') prefs.sugSeventh = sb.dataset.v === 'true'; if (k === 'sugAs') prefs.sugAs = sb.dataset.v; savePrefs(); renderSugg(); return; }
   const it = e.target.closest('[data-sug]'); if (!it) return;
   const sug = ui.sugAll[+it.dataset.sug]; if (!sug) return;
   const nb = sug.make();
+  if (prefs.sugAs === 'chord' && (nb.kind === 'chord' || nb.kind === 'prog')) {
+    const chords = nb.kind === 'chord' ? [{ root: nb.root, quality: nb.quality }] : progChords(nb).map(c => ({ root: c.root, quality: c.quality }));
+    insertStrummed(chords, sug.label);
+    return;
+  }
   const at = sel.bi == null ? doc.blocks.length : sel.bi + 1;
   commit(d => d.blocks.splice(at, 0, nb));
   sel = { bi: at, fi: null, fi2: null, k: null, k2: null }; refresh();
@@ -154,6 +159,29 @@ $('docKey').addEventListener('change', e => {
 });
 $('keyFilter').addEventListener('click', e => { const b = e.target.closest('button'); if (!b) return; prefs.keyFilter = b.dataset.v; savePrefs(); refresh(); });
 
+// Akkorde angeschlagen einfügen: Griff jeweils nah am vorherigen Ton.
+// In einer ausgewählten freien Tonfolge mit der eingestellten Länge, sonst als neue Tonfolge mit einem Takt pro Akkord.
+function insertStrummed(chords, label) {
+  let ref = lastToneBefore();
+  const grips = chords.map(c => { const f = chordFretNear(c.root, c.quality, ref), pos = chordVoicing(c.root, c.quality, f); if (pos.length) ref = { s: pos[0].s, f: pos[0].f }; return { c, pos }; }).filter(g => g.pos.length);
+  if (!grips.length) { status('Für diesen Akkord gibt es keinen Griff.'); return; }
+  const b = cur();
+  if (b && b.kind === 'free') {
+    const d0 = ui.dur || barPieces(meterOf(doc.time).len)[0];
+    freeInsertMany(grips.map(g => ({ pos: g.pos, dur: d0 })));
+  } else {
+    const nb = newBlock('free', doc.key ? { type: 'scale', root: doc.key.root, mode: doc.key.mode } : undefined);
+    if (!doc.key) nb.ref = null;
+    const pieces = barPieces(meterOf(doc.time).len);
+    nb.notes = grips.flatMap(g => pieces.map(d => ({ pos: clone(g.pos), dur: d })));
+    nb.title = chords.length === 1 ? `${chordName(chords[0].root, chords[0].quality)} angeschlagen` : `${label} (Akkorde)`;
+    const at = sel.bi == null ? doc.blocks.length : sel.bi + 1;
+    commit(d => d.blocks.splice(at, 0, nb));
+    sel = { bi: at, fi: null, fi2: null, k: null, k2: null }; refresh();
+  }
+  grips[0].pos.forEach((p, i) => setTimeout(() => Player.preview(OPEN[p.s] + p.f), i * 25));
+  status(`${grips.map(g => chordName(g.c.root, g.c.quality) + ' (' + g.pos.map(p => STR_NAMES[p.s] + p.f).join(' ') + ')').join(', ')} eingefügt. Akkord auswählen und „Als Arpeggio auflösen“, um ihn in Einzeltöne zu zerlegen.`);
+}
 function clearSel() { sel.fi = null; sel.fi2 = null; sel.k = null; sel.k2 = null; }
 function evByK(k) { for (const B of comp) for (const M of B.measures) for (const e of M.events) if (e.k === k) return { B, e }; return null; }
 function noteLabel(e) { return `${STR_NAMES[e.s]}-Saite, Bund ${e.f} (${deNote(e.sp.letter, e.sp.alter)})`; }
@@ -422,6 +450,7 @@ function inspFree(b, B) {
     <button class="btn sm" data-do="prev" aria-label="Vorheriger Eintrag"${!b.notes.length ? ' disabled' : ''}>◀</button>
     <button class="btn sm" data-do="next" aria-label="Nächster Eintrag"${!b.notes.length ? ' disabled' : ''}>▶</button>
     <button class="btn sm" data-do="desel"${!r ? ' disabled' : ''}>Auswahl aufheben</button>
+    <button class="btn sm" data-do="arp"${pos.length > 1 ? '' : ' disabled'} title="Akkord in Einzeltöne von tief nach hoch zerlegen, jeder mit der eingestellten Länge">Als Arpeggio auflösen</button>
     <span class="sep"></span>
     <button class="btn sm" data-tech="bend1" aria-pressed="${tech.bend === 1}"${single ? '' : ' disabled'}>Bending ½</button>
     <button class="btn sm" data-tech="bend2" aria-pressed="${tech.bend === 2}"${single ? '' : ' disabled'}>Bending 1</button>
@@ -541,6 +570,15 @@ ins.addEventListener('click', e => {
   else if (a === 'prev') freeMove(-1);
   else if (a === 'next') freeMove(1);
   else if (a === 'desel') { clearSel(); renderInspector(); markSheetSel(); }
+  else if (a === 'arp') {
+    const b = cur(); if (!b || b.kind !== 'free' || sel.fi == null) return;
+    const fi = sel.fi, n = b.notes[fi], ps = notePos(n).slice().sort((x, y) => x.s - y.s);
+    if (ps.length < 2) return;
+    const dur = ui.dur || 'e';
+    sel.fi = fi + ps.length - 1; sel.fi2 = fi; sel.k2 = null;
+    commit(d => d.blocks[sel.bi].notes.splice(fi, 1, ...ps.map(p => ({ pos: [p], dur }))));
+    status(`Akkord in ${ps.length} Einzeltöne zerlegt (${UNITS[dur].label}). Länge, Reihenfolge und Töne lassen sich jetzt einzeln ändern.`);
+  }
   else if (a === 'chordIns') {
     ui.chord = { root: $('chRoot').value, q: $('chQ').value, fret: +$('chFret').value };
     const pos = chordVoicing(ui.chord.root, ui.chord.q, ui.chord.fret);

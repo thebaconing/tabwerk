@@ -43,6 +43,12 @@ function chordFretNear(root, q, ref) {
   }
   return best ? best.f : 0;
 }
+// Notenlängen, die zusammen genau einen Takt füllen (größte zuerst)
+function barPieces(len) {
+  const out = []; let pos = 0;
+  while (pos < len) { const v = [48, 24, 12, 6, 3].find(x => x <= len - pos && pos % x === 0); out.push(DUR_KEY[v]); pos += v; }
+  return out;
+}
 // Griff für einen Akkord in Lage f: je Saite der tiefste Akkordton im Fenster, Bass = tiefster Grundton
 function chordVoicing(root, q, f) {
   const set = buildChord(root, q);
