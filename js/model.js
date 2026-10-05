@@ -25,6 +25,24 @@ function meterOf(t) {
 }
 // Töne eines Ereignisses (Einzelton oder Akkord) als [{s,f}]
 function notePos(n) { return n.pos ? n.pos : (n.s != null ? [{ s: n.s, f: n.f }] : []); }
+// Lage für einen Griff möglichst nah an einem Ton {s,f} (z. B. dem zuletzt gespielten).
+// Vollständige Griffe (alle Akkordtöne) haben Vorrang, dann der Abstand der Griffmitte zum Ton.
+function chordFretNear(root, q, ref) {
+  const want = new Set(buildChord(root, q).map(t => t.pc));
+  let best = null;
+  for (let f = 0; f <= 12; f++) {
+    const v = chordVoicing(root, q, f);
+    if (!v.length) continue;
+    const have = new Set(v.map(p => mod12(OPEN[p.s] + p.f)));
+    const complete = [...want].every(pc => have.has(pc));
+    const fr = v.map(p => p.f).filter(x => x > 0);
+    const center = fr.length ? fr.reduce((a, b) => a + b, 0) / fr.length : 0;
+    const span = fr.length ? Math.max(...fr) - Math.min(...fr) : 0;
+    const score = (complete ? 0 : 100) + (span > 3 ? 20 : 0) + (v.length < 3 && q !== '5' ? 30 : 0) + (ref ? Math.abs(center - ref.f) * 2 + Math.abs(v[0].s - ref.s) * 0.5 : center) + f * 0.01;
+    if (!best || score < best.score) best = { f, score, voicing: v };
+  }
+  return best ? best.f : 0;
+}
 // Griff für einen Akkord in Lage f: je Saite der tiefste Akkordton im Fenster, Bass = tiefster Grundton
 function chordVoicing(root, q, f) {
   const set = buildChord(root, q);
@@ -41,7 +59,8 @@ function chordVoicing(root, q, f) {
     return out;
   }
   const out = [{ s: bass, f: bassF }];
-  for (let s = bass + 1; s < 6; s++) { const fr = cands.find(x => degreeOf(set, OPEN[s] + x) >= 0); if (fr != null) out.push({ s, f: fr }); }
+  // ohne Lücken: hat eine Saite keinen Akkordton im Fenster, endet der Griff dort
+  for (let s = bass + 1; s < 6; s++) { const fr = cands.find(x => degreeOf(set, OPEN[s] + x) >= 0); if (fr == null) break; out.push({ s, f: fr }); }
   return out;
 }
 

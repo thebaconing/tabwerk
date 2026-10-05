@@ -554,7 +554,18 @@ ins.addEventListener('click', e => {
 ins.addEventListener('change', e => {
   const t = e.target;
   if (t.dataset.field) { setField(t.dataset.field, t.value); return; }
-  if (t.id === 'chRoot' || t.id === 'chQ' || t.id === 'chFret') { ui.chord = { root: $('chRoot').value, q: $('chQ').value, fret: +$('chFret').value }; if (t.id === 'chRoot') renderInspector(); return; }
+  if (t.id === 'chRoot' || t.id === 'chQ' || t.id === 'chFret') {
+    ui.chord = { root: $('chRoot').value, q: $('chQ').value, fret: +$('chFret').value };
+    if (t.id !== 'chFret') {
+      // Lage automatisch nah am zuletzt gespielten Ton
+      const last = lastToneBefore();
+      ui.chord.fret = chordFretNear(ui.chord.root, ui.chord.q, last);
+      const v = chordVoicing(ui.chord.root, ui.chord.q, ui.chord.fret);
+      status(`Lage ${ui.chord.fret === 0 ? 'offen' : 'Bund ' + ui.chord.fret}: ${v.map(p => STR_NAMES[p.s] + p.f).join(' ')}` + (last ? `, nah am letzten Ton (${STR_NAMES[last.s]}-Saite Bund ${last.f}).` : '.'));
+    }
+    renderInspector();
+    return;
+  }
   if (t.dataset.range === 'fret') { setField('fret', t.value); return; }
   if (t.dataset.pc != null) { const i = +t.dataset.pc, k = t.dataset.pk, v = k === 'deg' ? +t.value : t.value; commit(d => { d.blocks[sel.bi].chords[i][k] = v; }); return; }
   if (t.dataset.doChange === 'preset' && t.value) { const p = PROG_PRESETS.find(x => x.id === t.value); commit(d => { const x = d.blocks[sel.bi]; x.chords = p.chords.map(c => Object.assign({}, c)); if (p.id === 'i-iv-v' && x.mode !== 'minor') { x.root = relRoot(x.root, x.mode, 'minor'); x.mode = 'minor'; } }); }
@@ -605,6 +616,18 @@ function boardClick(s2, f) {
     return;
   }
   freeInsertMany([{ pos: [{ s: s2, f }], dur: ui.dur || b.unit }]);
+}
+// Letzter Ton vor der Einfügestelle: in der freien Tonfolge, sonst in den Bausteinen davor (bei Akkorden der Basston)
+function lastToneBefore() {
+  if (sel.bi == null) return null;
+  const r = freeRange();
+  for (let i = sel.bi; i >= 0; i--) {
+    const B = comp[i]; if (!B) continue;
+    let evs = B.measures.flatMap(m => m.events).filter(e => e.kind === 'note');
+    if (i === sel.bi && r && B.block.kind === 'free') evs = evs.filter(e => e.fi <= r[1]);
+    if (evs.length) { const e = evs[evs.length - 1]; return { s: e.s, f: e.f }; }
+  }
+  return null;
 }
 function clone(x) { return JSON.parse(JSON.stringify(x)); }
 function freeInsertMany(list) {
