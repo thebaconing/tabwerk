@@ -204,6 +204,8 @@ fieldset.group legend { padding: 0 6px; font-size: 11.5px; text-transform: upper
 .tg { display: flex; align-items: center; gap: 6px; cursor: pointer; font-size: 14px; }
 .tg input { accent-color: var(--primary); width: 16px; height: 16px; }
 .status { color: var(--muted); font-size: 13px; flex: 1 1 200px; min-width: 0; }
+.copy { color: var(--muted); font-size: 11px; opacity: .7; margin-left: auto; }
+.copy a { color: inherit; }
 @media (max-width: 600px) {
   .tempo input { width: 110px; }
   .play { min-width: 0; }
