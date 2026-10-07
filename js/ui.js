@@ -1075,7 +1075,7 @@ $('importFile').addEventListener('change', async e => {
   const f = e.target.files[0]; e.target.value = '';
   if (!f) return;
   try {
-    if (/.gpx?$/i.test(f.name)) {
+    if (/\.(gpx?|gp[345])$/i.test(f.name)) {
       const { docs, warn } = await importGuitarPro(new Uint8Array(await f.arrayBuffer()));
       docs.forEach(d => { d.updated = Date.now(); });
       lib.docs.push(...docs); switchDoc(docs[0]);

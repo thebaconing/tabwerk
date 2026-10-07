@@ -51,9 +51,9 @@ Jeder Baustein hat einen eigenen Notenwert (Viertel, Achtel, Achteltriolen, Sech
 - In freien Tonfolgen: Pfeiltasten wählen (Umschalt erweitert), Entf löscht, P setzt eine Pause
 - Strg+C / Strg+X / Strg+V: kopieren, ausschneiden, einfügen
 - Bibliothek: mehrere Übungsfolgen, im Browser gespeichert
-- Datei: MusicXML für Guitar Pro, Folge oder ganze Bibliothek als .json, Import von .json und Guitar Pro (.gp ab Version 7, .gpx aus Version 6)
+- Datei: MusicXML für Guitar Pro, Folge oder ganze Bibliothek als .json, Import von .json und Guitar Pro (.gp3, .gp4, .gp5, .gpx aus Version 6, .gp ab Version 7)
 
-**Guitar-Pro-Import:** Jede sechssaitige Gitarrenspur wird eine eigene Folge in der Bibliothek, mit einer freien Tonfolge (Saite und Bund wie notiert, Tempo, Taktart, Titel). Gesang, Bass, Schlagzeug und andere Instrumente werden übersprungen. Übernommen werden Töne, Akkorde, Pausen, Hammer-on/Pull-off und Slides; nur die erste Stimme je Takt. Weil es keine Haltebögen und punktierten Noten gibt, werden gebundene Töne zu Pausen und punktierte Noten zu Note plus Pause, die Takte bleiben dabei gleich lang. Gleichmäßig verstimmte Gitarren (z. B. Es-Stimmung) und Kapodaster behalten die Griffe, andere Stimmungen (z. B. Drop D) werden auf Standardstimmung umgerechnet. Ältere Formate (.gp3, .gp4, .gp5) werden nicht unterstützt.
+**Guitar-Pro-Import:** Jede sechssaitige Gitarrenspur wird eine eigene Folge in der Bibliothek, mit einer freien Tonfolge (Saite und Bund wie notiert, Tempo, Taktart, Titel). Gesang, Bass, Schlagzeug und andere Instrumente werden übersprungen. Übernommen werden Töne, Akkorde, Pausen, Triolen, Hammer-on/Pull-off, Slides und (bei .gp3 bis .gp5) Bendings; nur die erste Stimme je Takt. Weil es keine Haltebögen und punktierten Noten gibt, werden gebundene Töne zu Pausen und punktierte Noten zu Note plus Pause, die Takte bleiben dabei gleich lang. Gleichmäßig verstimmte Gitarren (z. B. Es-Stimmung) und Kapodaster behalten die Griffe, andere Stimmungen (z. B. Drop D) werden auf Standardstimmung umgerechnet.
 
 Der Browser-Speicher kann verloren gehen (Daten löschen, privates Fenster). Wichtige Folgen regelmäßig als .json sichern.
 
@@ -79,7 +79,7 @@ Erzeugt `dist/tabwerk.html` mit allem eingebettet und `dist/artifact.html` für 
 npm test
 ```
 
-Prüft die Tonart-Logik (leitereigene Akkorde aller Tonarten, Zwischendominanten, jeder Vorschlag besteht die eigene Prüfung, nach V folgt zuerst I), Akkordgriffe, andere Lagen (gleiche Töne, Griffweite), alle Taktarten, gemischte Notenlängen, Kopieren/Einfügen, Zusammenführen, alle Leitern, Tonarten, Lagen und Muster, alle Akkordtypen in mehreren Lagen, alle Vorlagen für Akkordfolgen, Reihen (Tonarten, Lagen, Oktaven), Techniken, das Umwandeln in freie Tonfolgen, den Import (auch Guitar Pro .gp und .gpx, gespeichert und komprimiert) und bei jedem Baustein: 4/4-Takte, Bund passt zum Ton, Schreibweise passt zum Ton, MusicXML-Tonhöhe passt zu Saite und Bund.
+Prüft die Tonart-Logik (leitereigene Akkorde aller Tonarten, Zwischendominanten, jeder Vorschlag besteht die eigene Prüfung, nach V folgt zuerst I), Akkordgriffe, andere Lagen (gleiche Töne, Griffweite), alle Taktarten, gemischte Notenlängen, Kopieren/Einfügen, Zusammenführen, alle Leitern, Tonarten, Lagen und Muster, alle Akkordtypen in mehreren Lagen, alle Vorlagen für Akkordfolgen, Reihen (Tonarten, Lagen, Oktaven), Techniken, das Umwandeln in freie Tonfolgen, den Import (auch Guitar Pro .gp3, .gp4, .gp5, .gpx und .gp) und bei jedem Baustein: 4/4-Takte, Bund passt zum Ton, Schreibweise passt zum Ton, MusicXML-Tonhöhe passt zu Saite und Bund.
 
 ## Aufbau
 
@@ -90,7 +90,7 @@ js/theory.js      Leitern, Akkorde, Schreibweise, Fingersätze
 js/model.js       Bausteine, Reihen, Takte
 js/harmony.js     Tonart des Stücks: Prüfung, Vorschläge, nächster Akkord
 js/musicxml.js    MusicXML- und ZIP-Export
-js/gpimport.js    Import von Guitar Pro (.gp, .gpx)
+js/gpimport.js    Import von Guitar Pro (.gp3 bis .gp5, .gpx, .gp)
 js/audio.js       Wiedergabe mit Gitarrenklang, Metronom, Techniken
 js/render.js      Griffbrett und Tabulatur als SVG
 js/ui.js          Oberfläche

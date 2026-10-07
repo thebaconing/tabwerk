@@ -70,7 +70,76 @@ module.exports = async function (T, ok) {
     const dd = r.docs[1].blocks[0].notes.map(x => x.rest ? 'r' + x.dur : x.pos.map(p => p.s + ':' + p.f).join('+') + '/' + x.dur).join(' ');
     ok(dd === '0:0/q' && r.warn.some(w => /Stimmung/.test(w)), 'GP-Import ' + tag + ': Drop D ' + dd);
   }
+  // --- Binärformat GP3 bis GP5: kleine Datei Feld für Feld schreiben (Reihenfolge wie beim Lesen) ---
+  const gpBinary = ver => {
+    const v4 = ver >= 400, v5 = ver >= 500, v50 = ver === 500, out = [];
+    const u8 = x => out.push(x & 255), i16 = x => { u8(x); u8(x >> 8); }, i32 = x => { i16(x); i16(x >> 16); };
+    const zeros = n => { for (let i = 0; i < n; i++) u8(0); };
+    const byteStr = (s, count) => { u8(s.length); for (let i = 0; i < count; i++) u8(i < s.length ? s.charCodeAt(i) : 0); };
+    const intByteStr = s => { i32(s.length + 1); byteStr(s, s.length); };
+    byteStr(`FICHIER GUITAR PRO v${(ver / 100).toFixed(2)}`, 30);
+    intByteStr('Binär Test'); for (let i = 0; i < (v5 ? 8 : 7); i++) intByteStr(''); i32(0);
+    if (!v5) u8(0);
+    if (v4) { i32(0); for (let i = 0; i < 5; i++) { i32(0); i32(0); } }
+    if (v5) { if (ver > 500) { i32(100); i32(0); zeros(11); } zeros(30); for (let i = 0; i < 10; i++) intByteStr(''); intByteStr('Moderato'); }
+    i32(132);
+    if (ver > 500) u8(0);
+    if (v5) { u8(0); i32(0); } else if (v4) { i32(0); u8(0); } else i32(0);
+    for (let c = 0; c < 64; c++) { i32(c === 0 ? 29 : 0); zeros(8); } // Kanal 1: Gitarre (Programm 29)
+    if (v5) { zeros(38); i32(0); }
+    i32(2); i32(2); // 2 Takte, 2 Spuren
+    // Takt 1 setzt 4/4, Takt 2 übernimmt
+    u8(0x03); u8(4); u8(4); if (v5) { zeros(4); u8(0); u8(0); }
+    if (v5) u8(0); u8(0); if (v5) { u8(0); u8(0); }
+    const track = (name, tuning, ch, drums, first) => {
+      if (v5 && (first || v50)) u8(0); // Füllbyte vor Spur 1, in 5.00 vor jeder Spur
+      u8(drums ? 1 : 0); byteStr(name, 40); i32(6); for (let i = 0; i < 7; i++) i32(tuning[i] || 0);
+      i32(1); i32(ch + 1); i32(ch + 2); i32(24); i32(0); zeros(4);
+      if (v5) { i16(0); zeros(3); i32(0); i32(0); i32(-1); zeros(12); i32(29); i32(1); i32(0); if (v50) { i16(0); u8(0); } else i32(0); if (ver > 500) { zeros(4); intByteStr(''); intByteStr(''); } }
+    };
+    track('Lead', [64, 59, 55, 50, 45, 40], 0, false, true);
+    track('Drums', [], 9, true, false);
+    if (v5) zeros(v50 ? 2 : 1);
+    // Schläge: [Notenwert (-1 Halbe, 0 Viertel, 1 Achtel), Pause, Punktiert, Töne [Saite (1 = höchste), Bund, Bindung, Hammer, Bending]]
+    const beat = ([code, rest, dotted, notes = []]) => {
+      u8((rest ? 0x40 : 0) | (dotted ? 0x01 : 0)); if (rest) u8(2); u8(code);
+      let sf = 0; notes.forEach(n => { sf |= 1 << (7 - n[0]); }); u8(sf);
+      notes.slice().sort((a, b) => a[0] - b[0]).forEach(([, fret, tie, hammer, bend]) => {
+        const fx = hammer || bend; u8(0x20 | (fx ? 0x08 : 0)); u8(tie ? 2 : 1); u8(fret);
+        if (v5) u8(0);
+        if (fx) {
+          if (v4) { u8((hammer ? 0x02 : 0) | (bend ? 0x01 : 0)); u8(0); } else u8((hammer ? 0x02 : 0) | (bend ? 0x01 : 0));
+          if (bend) { u8(1); i32(100); i32(3); [[0, 0], [20, 50], [60, 0]].forEach(([p, v]) => { i32(p); i32(v); u8(0); }); }
+        }
+      });
+      if (v5) i16(0);
+    };
+    const bars = [
+      [[0, false, false, [[6, 5, false, true]]], [1, true], [1, false, false, [[3, 2], [2, 3]]], [-1, false, false, [[1, 7, false, false, true]]]],
+      [[0, false, false, [[1, 7, true]]], [0, false, true, [[5, 2]]], [0, true], [1, true]]
+    ];
+    bars.forEach((bar, bi) => [0, 1].forEach(ti => {
+      const beats = ti === 0 ? bar : [[-2, true]];
+      i32(beats.length); beats.forEach(beat);
+      if (v5) { i32(1); beat([-2, true]); if (!(bi === 1 && ti === 1)) u8(0); } // zweite Stimme leer; letztes Zeilenumbruch-Byte fehlt absichtlich
+    }));
+    return new Uint8Array(out);
+  };
+  for (const ver of [300, 400, 500, 510]) {
+    let r;
+    try { r = await T.importGuitarPro(gpBinary(ver)); } catch (e) { ok(false, `GP-Import v${ver}: ${e.message}`); continue; }
+    ok(r.docs.length === 1, `GP-Import v${ver}: ${r.docs.length} statt 1 Gitarrenspur (Schlagzeug auslassen)`);
+    const d = r.docs[0], n = d.blocks[0].notes;
+    ok(d.name === 'Binär Test' && d.bpm === 132 && d.time === '4/4', `GP-Import v${ver}: Kopfdaten ${d.name} ${d.bpm} ${d.time}`);
+    const sig = n.map(x => x.rest ? 'r' + x.dur : x.pos.map(p => p.s + ':' + p.f).join('+') + '/' + x.dur).join(' ');
+    // Takt 1: Viertel mit Hammer-on, Achtelpause, Akkord als Achtel, Halbe mit Bending; Takt 2: Haltebogen-Ziel wird Pause, punktierte Viertel = Viertel + Achtelpause
+    ok(sig === '0:5/q re 3:2+4:3/e 5:7/h rq 1:2/q', `GP-Import v${ver}: ${sig}`);
+    ok(n[0].tech && n[0].tech.legato && n[3].tech && n[3].tech.bend === 2 && n[3].tech.release, `GP-Import v${ver}: Techniken ${JSON.stringify([n[0].tech, n[3].tech])}`);
+  }
   let err = '';
-  try { await T.importGuitarPro(new Uint8Array([0x18, ...Buffer.from('FICHIER GUITAR PRO v5.00')])); } catch (e) { err = e.message; }
-  ok(/gp5/.test(err), 'GP-Import: alte Formate werden erkannt');
+  try { await T.importGuitarPro(gpBinary(510).subarray(0, 900)); } catch (e) { err = e.message; }
+  ok(/beschädigt/.test(err), 'GP-Import: abgeschnittene Datei wird gemeldet');
+  err = '';
+  try { await T.importGuitarPro(new Uint8Array(0)); } catch (e) { err = e.message; }
+  ok(/leer/.test(err), 'GP-Import: leere Datei wird gemeldet');
 };
