@@ -262,5 +262,29 @@ for (const time of T.TIMES) {
   ok(T.chordBefore(comp, 1, 0).name === 'G7' && T.chordBefore(comp, 1, 2).name === 'Am' && T.chordBefore(comp, 1, null).name === 'Am', 'Akkord vor der Stelle');
 }
 
-console.log(`Prüfungen: ${checks}, Fehler: ${errs.length}`);
-if (errs.length) { console.log([...new Set(errs)].slice(0, 40).join('\n')); process.exit(1); }
+// --- Gleiche Töne in anderen Lagen ---
+{
+  const cases = [[[52], [55], [57], [59], [62], [64]], [[48, 52, 55], [50], [53, 57, 60]], [[40], [45], [50], [55], [59], [64], [76]]];
+  for (const groups of cases) for (const span of [4, 5, 6]) {
+    const alts = T.altPositions(groups, span);
+    ok(alts.length > 1, `Andere Lagen: keine für ${JSON.stringify(groups)}`);
+    ok(new Set(alts.map(a => a.key)).size === alts.length, 'Andere Lagen: Dubletten');
+    alts.forEach(a => {
+      ok(a.pos.length === groups.length, 'Andere Lagen: Anzahl');
+      a.pos.forEach((g, i) => {
+        ok(g.map(p => T.OPEN[p.s] + p.f).sort((x, y) => x - y).join() === groups[i].slice().sort((x, y) => x - y).join(), 'Andere Lagen: Ton geändert');
+        ok(new Set(g.map(p => p.s)).size === g.length, 'Andere Lagen: Saite doppelt');
+      });
+      a.pos.forEach(g => { const fr = g.map(p => p.f).filter(f => f > 0); ok(!fr.length || Math.max(...fr) - Math.min(...fr) <= 4, 'Andere Lagen: Akkord zu weit gegriffen'); });
+      const inLage = o => o.every(p => p.f === 0 || (p.f >= a.w && p.f < a.w + span));
+      ok(inLage(a.pos[0]), 'Andere Lagen: erster Ton nicht in der Lage');
+      ok(a.shifts === a.pos.filter(o => !inLage(o)).length, 'Andere Lagen: Lagenwechsel falsch gezählt');
+    });
+  }
+}
+
+// --- Guitar-Pro-Import (asynchron wegen Entpacken) ---
+require('./gp.js')(T, ok).then(() => {
+  console.log(`Prüfungen: ${checks}, Fehler: ${errs.length}`);
+  if (errs.length) { console.log([...new Set(errs)].slice(0, 40).join('\n')); process.exit(1); }
+});

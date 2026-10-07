@@ -23,7 +23,7 @@ let comp = [];
 let sel = { bi: doc.blocks.length ? 0 : null, fi: null, fi2: null, k: null, k2: null };
 let hist = { undo: [], redo: [], last: null };
 const ui = { mode: 'after', dur: null, markStart: null, libConfirm: null, userScrollUntil: 0, multi: new Set(), chord: { root: 'A', q: 'min', fret: 0 }, clip: store.get('tabwerk-clip') };
-const prefs = Object.assign({ countin: true, metro: true, loop: false, follow: true, theme: null, keyFilter: 'first', sugTab: 'scale', sugSeventh: false, sugAs: 'power' }, store.get(PREF_KEY) || {});
+const prefs = Object.assign({ countin: true, metro: true, loop: false, follow: true, theme: null, keyFilter: 'first', sugTab: 'scale', sugSeventh: false, sugAs: 'power', view: 'edit', altSpan: 5 }, store.get(PREF_KEY) || {});
 if (prefs.theme && !document.documentElement.hasAttribute('data-theme')) document.documentElement.setAttribute('data-theme', prefs.theme);
 
 let saveT = 0;
@@ -70,7 +70,7 @@ function refresh(o = {}) {
   if (!o.skipInsp) renderInspector();
   renderSheet();
   $('undo').disabled = !hist.undo.length; $('redo').disabled = !hist.redo.length;
-  renderKeyBar(); renderSugg();
+  renderKeyBar(); renderSugg(); renderView();
   $('bpm').value = doc.bpm; $('bpmOut').value = doc.bpm;
   $('docTime').value = doc.time || '4/4'; $('bpmLabel').textContent = meterOf(doc.time).compound ? '♩. =' : meterOf(doc.time).type === 8 ? '♪ =' : '♩ =';
   saveSoon();
@@ -1075,13 +1075,192 @@ $('importFile').addEventListener('change', async e => {
   const f = e.target.files[0]; e.target.value = '';
   if (!f) return;
   try {
+    if (/.gpx?$/i.test(f.name)) {
+      const { docs, warn } = await importGuitarPro(new Uint8Array(await f.arrayBuffer()));
+      docs.forEach(d => { d.updated = Date.now(); });
+      lib.docs.push(...docs); switchDoc(docs[0]);
+      status((docs.length === 1 ? `„${docs[0].name}“ importiert.` : `${docs.length} Gitarrenspuren als eigene Folgen importiert, in der Bibliothek.`) + (warn.length ? ' Hinweis: ' + warn.join('; ') + '.' : ''));
+      return;
+    }
     const data = JSON.parse(await f.text());
     const list = Array.isArray(data.docs) ? data.docs : data.doc ? [data.doc] : Array.isArray(data.blocks) ? [data] : null;
     if (!list) throw new Error('Die Datei enthält keine Übungsfolge.');
     const added = list.map(sanitizeDoc).map(d => { if (lib.docs.some(x => x.id === d.id)) { d.id = uid(); d.name += ' (importiert)'; } d.updated = Date.now(); return d; });
     lib.docs.push(...added); switchDoc(added[0]);
     status(added.length === 1 ? `„${added[0].name}“ importiert.` : `${added.length} Folgen importiert.`);
-  } catch (err) { status('Import fehlgeschlagen: ' + (err.message || 'Datei nicht lesbar') + '.'); }
+  } catch (err) { status('Import fehlgeschlagen: ' + (err.message || 'Datei nicht lesbar').replace(/.$/, '') + '.'); }
+});
+
+// ---------- Ansicht „Andere Lagen“ ----------
+// Zweite Seite neben dem Editor: zeigt, wo sich dieselben Töne (oder derselbe Akkord) an anderer Stelle des Griffbretts spielen lassen.
+
+// Quelle: markierte Töne, sonst der ausgewählte Baustein. Pausen bleiben für Vorschau und Einfügen erhalten.
+// Ergebnis: evs (Töne und Pausen), notes (nur Töne), groups (Tonhöhen je Ton/Akkord), orig (Griffe wie notiert),
+// bi (Baustein, falls alle Töne aus einem stammen), free (Töne lassen sich dort direkt ersetzen)
+function altSource() {
+  let evs = rangeEvents(), label = 'Markierte Töne';
+  if (!evs.length && sel.bi != null && comp[sel.bi]) { evs = comp[sel.bi].measures.flatMap(m => m.events); label = blockTitle(doc.blocks[sel.bi]); }
+  // Pausen am Anfang und Ende gehören nicht zur Abfolge
+  evs = evs.slice();
+  while (evs.length && evs[evs.length - 1].kind === 'rest') evs.pop();
+  while (evs.length && evs[0].kind === 'rest') evs.shift();
+  const notes = evs.filter(e => e.kind === 'note');
+  if (!notes.length) return null;
+  const bis = new Set(notes.map(e => { const r = e.k != null ? evByK(e.k) : null; return r ? r.B.bi : -1; }));
+  const bi = bis.size === 1 ? [...bis][0] : -1;
+  const free = bi >= 0 && doc.blocks[bi].kind === 'free' && notes.every(e => e.fi != null);
+  return { evs, notes, label, bi, free, groups: notes.map(e => [e].concat(e.extra || []).map(t => t.m)), orig: notes.map(e => [e].concat(e.extra || []).map(t => ({ s: t.s, f: t.f }))) };
+}
+// Einträge einer freien Tonfolge mit neuen Griffen, Rhythmus und Pausen wie in der Quelle
+function altNotes(src, pos) {
+  let i = 0;
+  return src.evs.map(e => { const n = evToNote(e); if (!n.rest) n.pos = pos[i++].map(p => ({ s: p.s, f: p.f })); return n; });
+}
+// Griffbrett für eine Variante. Ohne labelOf zeigen die Punkte die Reihenfolge (1, 2, 3 …), mit labelOf den Tonnamen (Akkorde).
+// Jeder Punkt trägt in data-n die Nummern der Töne, die er darstellt, damit die Wiedergabe ihn hervorheben kann.
+function altBoard(pos, labelOf) {
+  // Ausschnitt: ein Bund Rand um die gegriffenen Töne, mindestens sechs Bünde breit
+  const all = pos.flat(), fr = all.map(p => p.f).filter(f => f > 0);
+  const lo = all.some(p => p.f === 0) || !fr.length ? 0 : Math.max(1, Math.min(...fr) - 1), hi = Math.min(MAX_FRET, Math.max(fr.length ? Math.max(...fr) + 1 : 4, lo + 5));
+  // Mehrfach gespielte Stellen: je Durchgang ein eigener Punkt mit seiner Nummer nebeneinander im Bund
+  const at = new Map();
+  pos.forEach((g, i) => g.forEach(p => {
+    const k = p.s + ':' + p.f;
+    if (!at.has(k)) at.set(k, []);
+    const list = at.get(k);
+    if (labelOf && list.length) { list[0].n += ' ' + i; return; }
+    list.push({ n: String(i), s: p.s, f: p.f, cls: labelOf ? (labelOf(p).root ? 'on-root' : 'on') : i === 0 ? 'on-root' : 'on', label: labelOf ? labelOf(p).text : String(i + 1) });
+  }));
+  // Bünde so breit machen, dass die Punkte einer Stelle nebeneinander passen (höchstens sechs)
+  const maxOf = open => Math.max(1, ...[...at.values()].filter(l => (l[0].f === 0) === open).map(l => l.length));
+  const step = 18, fw = Math.min(6 * step + 6, Math.max(36, maxOf(false) * step + 6)), ow = Math.min(6 * step + 6, Math.max(38, maxOf(true) * step + 6));
+  const dots = [];
+  at.forEach(list => {
+    // Passt nicht alles in den Bund, zeigt der letzte Punkt „+Anzahl“ und steht für alle übrigen Töne
+    const room = Math.floor(((list[0].f === 0 ? ow : fw) - 6) / step);
+    const shown = list.length > room ? list.slice(0, room - 1).concat(Object.assign({}, list[room - 1], { label: '+' + (list.length - room + 1), n: list.slice(room - 1).map(d => d.n).join(' ') })) : list;
+    if (shown.length === 1) { dots.push(shown[0]); return; }
+    shown.forEach((d, j) => dots.push(Object.assign(d, { dx: (j - (shown.length - 1) / 2) * step, r: 8 })));
+  });
+  return `<div class="fb-wrap">${renderFretboard({ lo, hi, dots, fw, ow })}</div>`;
+}
+// Tabulatur als Text (z. B. „E0 A2 D2+G2“), jeder Eintrag einzeln hervorhebbar
+function altTab(pos) { return pos.map((g, i) => `<span data-n="${i}">${h(g.map(p => STR_NAMES[p.s] + p.f).join('+'))}</span>`).join(' '); }
+// Wiedergabe: gerade gespielten Ton im Griffbrett und in der Tabulatur der Karte hervorheben
+function altHighlight(ci, n) {
+  document.querySelectorAll('#altView .play').forEach(x => x.classList.remove('play'));
+  if (n == null) return;
+  document.querySelectorAll(`#altView .alt-card[data-ai="${ci}"] [data-n~="${n}"]`).forEach(x => x.classList.add('play'));
+}
+// Bundbereich einer Variante für die Überschrift
+function altWhere(pos) {
+  const fr = pos.flat().map(p => p.f).filter(f => f > 0);
+  if (!fr.length) return { lo: 0, text: 'Leere Saiten' };
+  const lo = Math.min(...fr), hi = Math.max(...fr);
+  return { lo, text: lo === hi ? `Bund ${lo}` : `Bund ${lo}–${hi}` };
+}
+// Umschalten zwischen Editor und „Andere Lagen“ (gemerkt in den Einstellungen)
+function renderView() {
+  const alt = prefs.view === 'alt';
+  $('viewSwitch').querySelectorAll('button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.v === prefs.view)));
+  document.querySelector('.work').hidden = alt; document.querySelector('.sheet-area').hidden = alt;
+  $('altView').hidden = !alt;
+  if (alt) renderAlt();
+}
+// Liste der Varianten: zuerst „Wie notiert“, dann die Alternativen als Karten
+function renderAlt() {
+  const el = $('altView'), span = prefs.altSpan;
+  const src = altSource();
+  // Ein einzelner Akkord: alle Griffe dieses Akkords, dazu dieselben Töne in anderen Lagen
+  const chord = src && src.notes.length === 1 && src.orig[0].length > 1 ? chordInfoOf(evToNote(src.notes[0])) : null;
+  const spanSeg = `<div class="seg" id="altSpan" aria-label="Griffweite">${[4, 5, 6].map(v => `<button type="button" data-span="${v}" aria-pressed="${v === span}">${v} Bünde</button>`).join('')}</div>`;
+  const head = `<div class="alt-head"><h2>Andere Lagen</h2>${spanSeg}
+    <span class="muted small">${chord ? 'Alle Griffe des Akkords auf dem Griffbrett, Grundton hervorgehoben.' : 'Gleiche Töne in gleicher Reihenfolge. Je Lage bleibt der Fingersatz in der Lage, solange es geht; Töne, die dort nicht liegen, werden mit kurzem Lagenwechsel gespielt. Die Zahlen zeigen die Reihenfolge.'}</span></div>`;
+  if (!src) { ui.alt = null; el.innerHTML = head + '<div class="empty">Im Editor einen Baustein auswählen oder in der Tabulatur Töne oder einen Akkord markieren (Klick, dann Umschalt-Klick). Hier erscheinen dann alle Stellen auf dem Griffbrett, an denen sich dasselbe spielen lässt.</div>'; return; }
+  if (src.notes.length > 200) { ui.alt = null; el.innerHTML = head + '<div class="empty">Das sind mehr als 200 Töne. Bitte einen kürzeren Bereich markieren.</div>'; return; }
+  const origKey = src.orig.map(voicingKey).join('|');
+  let alts = altPositions(src.groups, span);
+  let labelOf = null, name = '';
+  if (chord) {
+    const set = buildChord(chord.root, chord.quality), rpc = pcOf(chord.root);
+    name = chord.power ? powerName(chord.root, chord.quality) : chordName(chord.root, chord.quality);
+    labelOf = p => { const m = OPEN[p.s] + p.f, sp = spellMidi(m, set); return { text: deNote(sp.letter, sp.alter), root: mod12(m) === rpc }; };
+    // Akkordgriffe aus der Griffliste ergänzen, soweit sie nicht schon als gleiche Töne gefunden wurden
+    const same = new Set(alts.map(a => a.key));
+    const grips = chordVoicingsAll(chord.root, chord.quality, chord.power).map(v => ({ pos: [v], key: voicingKey(v), grip: true })).filter(g => !same.has(g.key));
+    alts = alts.map(a => Object.assign(a, { exact: true })).concat(grips);
+    const lowOf = a => altWhere(a.pos).lo;
+    alts.sort((x, y) => lowOf(x) - lowOf(y));
+  }
+  // Die notierte Fassung steht schon oben
+  alts = alts.filter(a => a.key !== origKey);
+  ui.alt = { src, list: [{ pos: src.orig, orig: true }].concat(alts) };
+  const n = src.notes.length;
+  const card = (a, i) => {
+    const playing = ui.altPlay === i && Player.isPlaying();
+    const bass = a.pos[0].slice().sort((x, y) => x.s - y.s)[0];
+    // Zusatz zur Überschrift: bei Akkorden Basssaite und Art des Griffs, bei Tonfolgen die Lagenwechsel
+    const sub = chord ? ` · Bass ${STR_NAMES[bass.s]}-Saite${a.orig ? '' : a.grip ? ' · andere Umkehrung/Oktave' : ' · gleiche Töne'}`
+      : a.shifts ? ` · ${a.shifts} ${a.shifts === 1 ? 'Ton' : 'Töne'} mit Lagenwechsel, gesamt ${altWhere(a.pos).text}` : '';
+    return `<div class="alt-card${a.orig ? ' orig' : ''}" data-ai="${i}"><div class="alt-card-head"><h3>${a.orig ? 'Wie notiert · ' + altWhere(a.pos).text : a.w != null && !chord ? `Lage Bund ${a.w}–${a.w + a.span - 1}` : altWhere(a.pos).text}<span class="muted small">${h(sub)}</span></h3>
+      <button class="btn sm" data-altplay="${i}">${playing ? '■ Stopp' : '▶ abspielen'}</button>
+      ${a.orig ? '' : `${src.free ? `<button class="btn sm" data-altuse="${i}" title="${chord ? 'Den Akkord im Baustein durch diesen Griff ersetzen' : 'Die Töne im Baustein auf diese Lage umsetzen'}">Übernehmen</button>` : ''}<button class="btn sm" data-altins="${i}" title="Als neue freie Tonfolge hinter dem Baustein einfügen">Als Tonfolge einfügen</button>`}</div>
+      ${altBoard(a.pos, labelOf)}<div class="alt-tab">${altTab(a.pos)}</div></div>`;
+  };
+  const what = chord ? `Akkord ${name}` : `${src.label}: ${n} ${n === 1 ? 'Ton' : 'Töne'}`;
+  const found = alts.length ? `${alts.length} ${chord ? (alts.length === 1 ? 'anderer Griff' : 'andere Griffe') : alts.length === 1 ? 'andere Lage' : 'andere Lagen'} gefunden.` : 'Mit dieser Griffweite gibt es keine andere Lage. Eine größere Griffweite oder einen kürzeren Bereich versuchen.';
+  el.innerHTML = head + `<p class="muted small">${h(what)}. ${found}</p><div class="alt-list">${ui.alt.list.map(card).join('')}</div>`;
+}
+// Variante i anhören: als eigene freie Tonfolge im Tempo der Folge, gespielte Töne werden hervorgehoben.
+// Ein zweiter Klick auf dieselbe Variante stoppt.
+async function altPlay(i) {
+  if (Player.isPlaying()) { const was = ui.altPlay; Player.stop(); if (was === i) return; }
+  const a = ui.alt && ui.alt.list[i]; if (!a) return;
+  const tmp = clone(doc), nb = newBlock('free'); nb.ref = null; nb.notes = altNotes(ui.alt.src, a.pos);
+  tmp.blocks = [nb];
+  ui.altPlay = i;
+  try {
+    // Die Wiedergabe meldet Ereignis-Schlüssel, die Karte kennt Tonnummern: Zuordnung vorab bauen
+    const tc = computeDoc(tmp), kIdx = new Map();
+    tc[0].measures.flatMap(m => m.events).filter(e => e.kind === 'note').forEach((e, j) => kIdx.set(e.k, j));
+    await Player.start(tc, 0, {
+      bpm: () => doc.bpm, countIn: () => false, loop: () => $('loop').checked, metronome: () => $('metro').checked,
+      onNote: k => altHighlight(i, kIdx.get(k)), onStop: () => { altHighlight(null); ui.altPlay = null; if (prefs.view === 'alt') renderAlt(); status(''); }
+    });
+    renderAlt();
+    status(`Spielt ${altWhere(a.pos).text}.`);
+  } catch (err) { ui.altPlay = null; status(err.message); }
+}
+$('altView').addEventListener('click', e => {
+  const sp = e.target.closest('[data-span]'); if (sp) { prefs.altSpan = +sp.dataset.span; savePrefs(); renderAlt(); return; }
+  const pl = e.target.closest('[data-altplay]'); if (pl) { altPlay(+pl.dataset.altplay); return; }
+  if (!ui.alt) return;
+  const { src } = ui.alt;
+  // Übernehmen: Griffe im Baustein ersetzen (nur freie Tonfolgen, rückgängig machbar)
+  const us = e.target.closest('[data-altuse]');
+  if (us) {
+    const a = ui.alt.list[+us.dataset.altuse];
+    commit(d => src.notes.forEach((ev, i) => { d.blocks[src.bi].notes[ev.fi].pos = a.pos[i].map(p => ({ s: p.s, f: p.f })); }));
+    status(`Auf ${altWhere(a.pos).text} umgesetzt. Rückgängig mit Strg+Z.`);
+    return;
+  }
+  // Als neue freie Tonfolge direkt hinter dem Quell-Baustein einfügen
+  const ins = e.target.closest('[data-altins]');
+  if (ins) {
+    const a = ui.alt.list[+ins.dataset.altins];
+    const base = src.bi >= 0 ? doc.blocks[src.bi] : cur(), ref = refOfBlock(base);
+    const nb = newBlock('free', ref || undefined); if (!ref) nb.ref = null;
+    nb.notes = altNotes(src, a.pos);
+    nb.title = `${src.label.slice(0, 50)} · ab Bund ${altWhere(a.pos).lo}`;
+    const at = src.bi >= 0 ? src.bi + 1 : sel.bi != null ? sel.bi + 1 : doc.blocks.length;
+    commit(d => d.blocks.splice(at, 0, nb));
+    status(`Als Baustein ${at + 1} eingefügt, im Editor zu sehen.`);
+  }
+});
+$('viewSwitch').addEventListener('click', e => {
+  const b = e.target.closest('button'); if (!b) return;
+  if (ui.altPlay != null) Player.stop();
+  prefs.view = b.dataset.v; savePrefs(); renderView();
 });
 
 // ---------- Farbschema ----------

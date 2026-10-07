@@ -3,12 +3,13 @@
 
 const MARKERS = [3, 5, 7, 9, 12, 15, 17, 19, 21];
 
-// Griffbrett von Bund lo bis hi. dots: [{s,f,cls,label,blue,end}], hit: klickbare Flächen
-function renderFretboard({ lo, hi, dots = [], hit = false, fw = 36 }) {
+// Griffbrett von Bund lo bis hi. dots: [{s,f,cls,label,blue,end,dx,r,n}] (dx/r: versetzter, kleinerer Punkt; n: Kennung für die Wiedergabe), hit: klickbare Flächen,
+// fw: Breite je Bund, ow: Breite der Spalte für leere Saiten
+function renderFretboard({ lo, hi, dots = [], hit = false, fw = 36, ow = 38 }) {
   const showOpen = lo === 0, lo1 = Math.max(1, lo);
-  const nF = hi - lo1 + 1, ss = 19, oy = 12, ox = showOpen ? 50 : 30;
+  const nF = hi - lo1 + 1, ss = 19, oy = 12, ox = showOpen ? ow + 18 : 30;
   const W = ox + nF * fw + 10, H = oy + 5 * ss + 30;
-  const xOf = f => f === 0 ? ox - 18 : ox + (f - lo1 + 0.5) * fw;
+  const xOf = f => f === 0 ? ox - ow / 2 - 1 : ox + (f - lo1 + 0.5) * fw;
   const yOf = s => oy + (5 - s) * ss;
   let s = '';
   // Einlagen
@@ -20,7 +21,7 @@ function renderFretboard({ lo, hi, dots = [], hit = false, fw = 36 }) {
   for (let i = 0; i < 6; i++) {
     const y = yOf(i);
     s += `<line class="str" x1="${ox}" y1="${y}" x2="${ox + nF * fw}" y2="${y}" stroke-width="${0.8 + (5 - i) * 0.28}"/>`;
-    s += `<text class="num" x="${showOpen ? 12 : ox - 16}" y="${y + 3.8}" text-anchor="middle">${STR_NAMES[i]}</text>`;
+    s += `<text class="num" x="${showOpen ? 9 : ox - 16}" y="${y + 3.8}" text-anchor="middle">${STR_NAMES[i]}</text>`;
   }
   for (let c = 0; c <= nF; c++) {
     const x = ox + c * fw, nut = c === 0 && lo1 === 1;
@@ -37,9 +38,9 @@ function renderFretboard({ lo, hi, dots = [], hit = false, fw = 36 }) {
     if (d.f < lo && d.f !== 0) continue;
     if (d.f > hi) continue;
     if (d.f === 0 && !showOpen) continue;
-    const x = xOf(d.f), y = yOf(d.s);
-    s += `<g pointer-events="none"><circle class="dot ${d.cls}${d.blue ? ' blue' : ''}${d.end ? ' end' : ''}" cx="${x}" cy="${y}" r="8.6"/>` +
-      (d.label ? `<text class="dt ${d.cls}" x="${x}" y="${y + 3.4}" text-anchor="middle">${d.label}</text>` : '') + '</g>';
+    const x = xOf(d.f) + (d.dx || 0), y = yOf(d.s), r = d.r || 8.6;
+    s += `<g pointer-events="none"${d.n != null ? ` data-n="${d.n}"` : ''}><circle class="dot ${d.cls}${d.blue ? ' blue' : ''}${d.end ? ' end' : ''}" cx="${x}" cy="${y}" r="${r}"/>` +
+      (d.label ? `<text class="dt ${d.cls}${r < 8.6 ? ' sm' : ''}" x="${x}" y="${y + 3.4}" text-anchor="middle">${d.label}</text>` : '') + '</g>';
   }
   return `<svg class="fb" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" role="img" aria-label="Griffbrett Bund ${lo} bis ${hi}">${s}</svg>`;
 }

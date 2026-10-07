@@ -526,3 +526,69 @@ function cleanNote(x) {
   if (x.chord && CHORD_ROOTS.includes(x.chord.root) && CHORDS[x.chord.quality] && pos.length > 1) n.chord = { root: x.chord.root, quality: x.chord.quality, power: !!x.chord.power };
   return n;
 }
+
+// ---------- Gleiche Töne in anderen Lagen ----------
+// Alle Griffe für einen Ton oder Akkord: jede Saite höchstens einmal, gegriffene Bünde höchstens 4 auseinander.
+function groupOptions(midis) {
+  const out = [], used = new Array(6).fill(false), cur = [];
+  const ms = midis.slice().sort((a, b) => a - b);
+  (function rec(i) {
+    if (out.length > 60) return;
+    if (i === ms.length) {
+      const fr = cur.map(p => p.f).filter(f => f > 0);
+      if (!fr.length || Math.max(...fr) - Math.min(...fr) <= 4) out.push(cur.slice());
+      return;
+    }
+    for (let s = 0; s < 6; s++) {
+      if (used[s]) continue;
+      const f = ms[i] - OPEN[s];
+      if (f < 0 || f > MAX_FRET) continue;
+      used[s] = true; cur.push({ s, f }); rec(i + 1); cur.pop(); used[s] = false;
+    }
+  })(0);
+  return out;
+}
+// groups: [[midi, ...], ...] je Ton oder Akkord. Für jede Lage (Fenster ab Bund w, span Bünde breit) der ruhigste Fingersatz:
+// Töne bleiben möglichst im Fenster (leere Saiten passen immer), sonst so kurz wie möglich daneben; Lagenwechsel und Saitensprünge kosten.
+// Ergebnis: [{w, span, lo, hi, pos:[[{s,f}], ...], shifts}] nach Lage sortiert, shifts = Töne außerhalb der Lage, ohne Dubletten.
+function altPositions(groups, span = 5) {
+  if (!groups.length) return [];
+  const opts = groups.map(groupOptions);
+  if (opts.some(o => !o.length)) return [];
+  const seen = new Set(), res = [];
+  const center = o => { const fr = o.filter(p => p.f > 0).map(p => p.f); return fr.length ? fr.reduce((a, b) => a + b, 0) / fr.length : null; };
+  for (let w = 1; w + span - 1 <= MAX_FRET; w++) {
+    // Wie weit ein Griff außerhalb der Lage liegt (in Bünden); hohe Kosten dafür halten den Fingersatz in der Lage
+    const outside = o => o.reduce((a, p) => a + (p.f === 0 ? 0 : Math.max(0, w - p.f, p.f - (w + span - 1))), 0);
+    const here = o => outside(o) * 4 + Math.abs((center(o) ?? w + 1.5) - (w + 1.5)) * 0.15;
+    // Erster Ton muss in der Lage liegen, sonst gehört der Fingersatz zu einer anderen Lage
+    const first = opts[0].filter(o => !outside(o));
+    if (!first.length) continue;
+    // Kürzester Weg über alle Töne (dynamische Programmierung): trail[i] hält je Griff die günstigsten Gesamtkosten und den Vorgänger
+    let trail = [first.map(o => ({ c: here(o), from: -1, o }))];
+    for (let i = 1; i < opts.length; i++) {
+      const prev = trail[i - 1];
+      trail.push(opts[i].map(o => {
+        const cb = center(o); let best = null;
+        prev.forEach((p, j) => {
+          const ca = center(p.o);
+          const c = p.c + here(o) + (ca != null && cb != null ? Math.abs(ca - cb) * 0.5 : 0) + 0.35 * Math.abs(p.o[0].s - o[0].s);
+          if (!best || c < best.c) best = { c, from: j, o };
+        });
+        return best;
+      }));
+    }
+    // Günstigsten Endgriff wählen und den Weg rückwärts ablesen
+    const last = trail[trail.length - 1];
+    let k = last.reduce((bi, p, j) => p.c < last[bi].c ? j : bi, 0);
+    const pos = [];
+    for (let i = trail.length - 1; i >= 0; i--) { pos.unshift(trail[i][k].o); k = trail[i][k].from; }
+    // Benachbarte Lagen liefern oft denselben Fingersatz: nur einmal aufnehmen
+    const key = pos.map(voicingKey).join('|');
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const fr = pos.flat().map(p => p.f).filter(f => f > 0);
+    res.push({ w, span, lo: fr.length ? Math.min(...fr) : 0, hi: fr.length ? Math.max(...fr) : 0, pos, key, shifts: pos.filter(o => outside(o)).length });
+  }
+  return res;
+}

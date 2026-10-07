@@ -146,6 +146,7 @@ fieldset.group legend { padding: 0 6px; font-size: 11.5px; text-transform: upper
 .dot.end { stroke: var(--fg); stroke-width: 2.4; }
 .dot.blue { stroke-dasharray: 2.5 2; }
 .dt { font: 600 9.5px var(--f-mono); }
+.dt.sm { font-size: 9px; letter-spacing: -.03em; }
 .dt.on, .dt.on-root { fill: var(--on-primary); }
 .dt.on-root { fill: var(--on-brass); }
 .dt.off, .dt.ghost { fill: var(--fg); }
@@ -211,7 +212,13 @@ fieldset.group legend { padding: 0 6px; font-size: 11.5px; text-transform: upper
   .play { min-width: 0; }
   .add-grid { grid-template-columns: 1fr; }
 }
-@media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto !important; transition: none !important; } }
+/* Wiedergabe in „Andere Lagen“: gespielter Punkt leuchtet auf */
+.fb g.play .dot { fill: var(--brass); stroke: var(--fg); stroke-width: 2.4; transform-box: fill-box; transform-origin: center; animation: dotpulse .35s ease-out; }
+.fb g.play .dt { fill: var(--on-brass); }
+@keyframes dotpulse { from { transform: scale(1.5); } to { transform: scale(1); } }
+.alt-tab span { border-radius: 4px; padding: 0 2px; transition: background .1s; }
+.alt-tab span.play { background: var(--brass); color: var(--on-brass); }
+@media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto !important; transition: none !important; animation: none !important; } }
 .staff .arp { stroke: var(--brass); stroke-width: 1.4; stroke-dasharray: 2 2; }
 .staff .tsig { font: 700 15px var(--f-display); fill: var(--fg); }
 .timesel { display: flex; align-items: center; gap: 6px; }
@@ -248,3 +255,16 @@ fieldset.group legend { padding: 0 6px; font-size: 11.5px; text-transform: upper
 .prev-btn { width: 40px; padding: 0; font-size: 15px; }
 .prev-btn[aria-pressed=true] { background: var(--brass); color: var(--on-brass); border-color: var(--brass); }
 .gripctl { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--line); border-radius: 8px; padding: 2px 4px; }
+
+/* Ansicht „Andere Lagen“ */
+.viewsw { flex: 0 0 auto; }
+.viewsw button { flex: 0 0 auto; padding: 6px 12px; white-space: nowrap; }
+.alt-view { display: grid; gap: 14px; }
+.alt-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; }
+.alt-head .seg { flex: 0 0 auto; }
+.alt-list { display: grid; gap: 10px; grid-template-columns: 1fr; }
+.alt-card { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; display: grid; gap: 8px; min-width: 0; }
+.alt-card.orig { border-color: var(--brass); }
+.alt-card-head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
+.alt-card-head h3 { font: 700 15px/1.2 var(--f-display); margin: 0; margin-right: auto; }
+.alt-tab { font: 500 12.5px/1.5 var(--f-mono); color: var(--muted); overflow-wrap: anywhere; }

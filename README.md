@@ -27,6 +27,12 @@ Jeder Baustein hat einen eigenen Notenwert (Viertel, Achtel, Achteltriolen, Sech
 - Griff durchschalten: Akkord in einer freien Tonfolge auswählen, mit ◀ ▶ durch die spielbaren Griffe auf dem Griffbrett blättern (bei Powerchords Grundton auf E-, A-, D- oder G-Saite).
 - Einen erzeugten Baustein in eine freie Tonfolge umwandeln, um jeden Ton direkt zu ändern.
 
+**Andere Lagen:** Über den Umschalter oben zur zweiten Seite wechseln. Sie arbeitet mit den markierten Tönen, sonst mit dem ausgewählten Baustein.
+
+- Tonfolge: Für jede Lage (Griffweite 4, 5 oder 6 Bünde) zeigt sie, wie sich dieselben Töne in derselben Reihenfolge dort spielen lassen. Töne, die in der Lage nicht liegen, werden mit kurzem Lagenwechsel gespielt; die Karte nennt, wie viele das sind. Das Griffbrett zeigt die Reihenfolge als Zahlen.
+- Einzelner Akkord: alle Griffe des Akkords auf dem Griffbrett (andere Umkehrungen und Oktaven) und dieselben Töne in anderen Lagen, mit Tonnamen und hervorgehobenem Grundton.
+- Jede Variante lässt sich anhören, als neue freie Tonfolge einfügen oder in einer freien Tonfolge direkt übernehmen.
+
 **Tonart des Stücks:** oben wählen (alle Dur- und Molltonarten). Dann gilt:
 
 - Vorschläge passend zur Tonart (Akkorde zuerst als Powerchord, wahlweise als voller Akkord oder Arpeggio; Powerchords merken sich den Akkord und lassen sich später mit „Zum vollen Akkord“ erweitern, angeschlagene Akkorde mit „Als Arpeggio auflösen“ zerlegen): Skalen und Übungen (Tonart, Paralleltonart, Pentatonik, Blues), leitereigene Akkorde mit Stufe, Akkordfolgen, und der nächste Akkord nach dem vorherigen (übliche Fortsetzungen nach Funktionsharmonik zuerst).
@@ -45,7 +51,9 @@ Jeder Baustein hat einen eigenen Notenwert (Viertel, Achtel, Achteltriolen, Sech
 - In freien Tonfolgen: Pfeiltasten wählen (Umschalt erweitert), Entf löscht, P setzt eine Pause
 - Strg+C / Strg+X / Strg+V: kopieren, ausschneiden, einfügen
 - Bibliothek: mehrere Übungsfolgen, im Browser gespeichert
-- Datei: MusicXML für Guitar Pro, Folge oder ganze Bibliothek als .json, Import
+- Datei: MusicXML für Guitar Pro, Folge oder ganze Bibliothek als .json, Import von .json und Guitar Pro (.gp ab Version 7, .gpx aus Version 6)
+
+**Guitar-Pro-Import:** Jede sechssaitige Gitarrenspur wird eine eigene Folge in der Bibliothek, mit einer freien Tonfolge (Saite und Bund wie notiert, Tempo, Taktart, Titel). Gesang, Bass, Schlagzeug und andere Instrumente werden übersprungen. Übernommen werden Töne, Akkorde, Pausen, Hammer-on/Pull-off und Slides; nur die erste Stimme je Takt. Weil es keine Haltebögen und punktierten Noten gibt, werden gebundene Töne zu Pausen und punktierte Noten zu Note plus Pause, die Takte bleiben dabei gleich lang. Gleichmäßig verstimmte Gitarren (z. B. Es-Stimmung) und Kapodaster behalten die Griffe, andere Stimmungen (z. B. Drop D) werden auf Standardstimmung umgerechnet. Ältere Formate (.gp3, .gp4, .gp5) werden nicht unterstützt.
 
 Der Browser-Speicher kann verloren gehen (Daten löschen, privates Fenster). Wichtige Folgen regelmäßig als .json sichern.
 
@@ -71,7 +79,7 @@ Erzeugt `dist/tabwerk.html` mit allem eingebettet und `dist/artifact.html` für 
 npm test
 ```
 
-Prüft die Tonart-Logik (leitereigene Akkorde aller Tonarten, Zwischendominanten, jeder Vorschlag besteht die eigene Prüfung, nach V folgt zuerst I), Akkordgriffe, alle Taktarten, gemischte Notenlängen, Kopieren/Einfügen, Zusammenführen, alle Leitern, Tonarten, Lagen und Muster, alle Akkordtypen in mehreren Lagen, alle Vorlagen für Akkordfolgen, Reihen (Tonarten, Lagen, Oktaven), Techniken, das Umwandeln in freie Tonfolgen, den Import und bei jedem Baustein: 4/4-Takte, Bund passt zum Ton, Schreibweise passt zum Ton, MusicXML-Tonhöhe passt zu Saite und Bund.
+Prüft die Tonart-Logik (leitereigene Akkorde aller Tonarten, Zwischendominanten, jeder Vorschlag besteht die eigene Prüfung, nach V folgt zuerst I), Akkordgriffe, andere Lagen (gleiche Töne, Griffweite), alle Taktarten, gemischte Notenlängen, Kopieren/Einfügen, Zusammenführen, alle Leitern, Tonarten, Lagen und Muster, alle Akkordtypen in mehreren Lagen, alle Vorlagen für Akkordfolgen, Reihen (Tonarten, Lagen, Oktaven), Techniken, das Umwandeln in freie Tonfolgen, den Import (auch Guitar Pro .gp und .gpx, gespeichert und komprimiert) und bei jedem Baustein: 4/4-Takte, Bund passt zum Ton, Schreibweise passt zum Ton, MusicXML-Tonhöhe passt zu Saite und Bund.
 
 ## Aufbau
 
@@ -82,6 +90,7 @@ js/theory.js      Leitern, Akkorde, Schreibweise, Fingersätze
 js/model.js       Bausteine, Reihen, Takte
 js/harmony.js     Tonart des Stücks: Prüfung, Vorschläge, nächster Akkord
 js/musicxml.js    MusicXML- und ZIP-Export
+js/gpimport.js    Import von Guitar Pro (.gp, .gpx)
 js/audio.js       Wiedergabe mit Gitarrenklang, Metronom, Techniken
 js/render.js      Griffbrett und Tabulatur als SVG
 js/ui.js          Oberfläche
